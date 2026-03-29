@@ -8,40 +8,61 @@
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject private var profile: SleepProfile
+    @State private var showingProfile = false
+    @State private var slider = SleepSliderView()
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 Color.clear.moonbeamBackground()
 
-                VStack(spacing: 20) {
-                    Text("Moonbeam 🌙")
-                        .font(.system(size: 36, weight: .bold))
+                ScrollView {
+                    VStack(spacing: 28) {
+                        VStack(spacing: 16) {
+                            slider
+                        }
+                        .moonbeamCard()
 
-                    NavigationLink(destination: SleepNowView()) {
-                        Text("I’m going to sleep now")
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
+                        Button {
+                            slider.sleepNow()
+                        } label: {
+                            Label("Sleep Now", systemImage: "moon.zzz.fill")
+                                .font(.headline)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.glass)
                     }
-
-                    NavigationLink(destination: WakeTimeView()) {
-                        Text("I want to wake up at...")
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.purple)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
+                    .padding()
+                }
+            }
+            .navigationTitle("")
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Label("Moonbeam", systemImage: "moon.stars.fill")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingProfile = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                            .foregroundStyle(.white.opacity(0.8))
                     }
                 }
-                .padding()
-                .foregroundColor(.white)
+            }
+            .sheet(isPresented: $showingProfile) {
+                SleepProfileView()
+                    .environmentObject(profile)
             }
         }
+        .preferredColorScheme(.dark)
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(SleepProfile())
 }

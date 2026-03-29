@@ -9,9 +9,12 @@ import SwiftUI
 
 @main
 struct MoonbeamApp: App {
+    @StateObject private var profile = SleepProfile()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(profile)
         }
     }
 }

@@ -18,4 +18,10 @@ extension View {
         )
         .ignoresSafeArea()
     }
+
+    func moonbeamCard() -> some View {
+        self
+            .padding(20)
+            .glassEffect(.regular.tint(.indigo.opacity(0.15)), in: .rect(cornerRadius: 24))
+    }
 }
