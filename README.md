@@ -36,7 +36,6 @@ The gradient tells a story too -- sunset orange at bedtime fades through deep vi
 - [ ] **Sonos alarm support** -- if Sonos API allows it, set wake alarms on Sonos speakers
 - [ ] **Sleep journaling (Tool 1.1)** -- record sleep/wake times without needing a wearable; use data over time to calculate personal sleep cycle length and fall-asleep time automatically
 - [ ] **Apple Watch integration (Tool 1.2)** -- pull sleep data from HealthKit/Apple Watch to refine cycle calculations
-- [ ] **Arc drag gesture polish** -- the arc-drag (moving the whole sleep window) could use smoother snapping and edge-case handling
 - [ ] **Onboarding / first-launch** -- explain what REM cycles are and why this app exists
 - [ ] **Widget** -- Lock Screen and Home Screen widgets showing next alarm / bedtime
 
