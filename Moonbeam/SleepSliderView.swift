@@ -479,7 +479,6 @@ struct SleepSliderView: View {
                 if currentAngle < 0 { currentAngle += 2 * .pi }
 
                 if !isDraggingArc {
-                    // First event — record starting angle, don't move yet
                     isDraggingArc = true
                     arcDragPreviousAngle = currentAngle
                     return
@@ -490,28 +489,25 @@ struct SleepSliderView: View {
                 if delta > .pi { delta -= 2 * .pi }
                 if delta < -.pi { delta += 2 * .pi }
 
-                // Shift both angles
-                var newBed = bedAngle + delta
-                var newWake = wakeAngle + delta
-                // Normalize to [0, 2pi)
-                if newBed < 0 { newBed += 2 * .pi }
-                if newBed >= 2 * .pi { newBed -= 2 * .pi }
-                if newWake < 0 { newWake += 2 * .pi }
-                if newWake >= 2 * .pi { newWake -= 2 * .pi }
+                // Shift both angles continuously — no per-frame snapping
+                bedAngle = (bedAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                wakeAngle = (wakeAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                if bedAngle < 0 { bedAngle += 2 * .pi }
+                if wakeAngle < 0 { wakeAngle += 2 * .pi }
 
-                // Snap to 15-min increments
-                let bedMins = SleepCalculator.minutesSinceMidnight(from: newBed)
-                let snappedBedMins = (bedMins / 15) * 15
-                let wakeMins = SleepCalculator.minutesSinceMidnight(from: newWake)
-                let snappedWakeMins = (wakeMins / 15) * 15
-
-                bedAngle = Double(snappedBedMins) / 1440.0 * 2.0 * .pi
-                wakeAngle = Double(snappedWakeMins) / 1440.0 * 2.0 * .pi
                 arcDragPreviousAngle = currentAngle
             }
             .onEnded { _ in
                 isDraggingArc = false
+                // Snap to 15-min grid on release
+                let bedMins = SleepCalculator.minutesSinceMidnight(from: bedAngle)
+                let snappedBedMins = ((bedMins + 7) / 15) * 15  // round to nearest
+                let wakeMins = SleepCalculator.minutesSinceMidnight(from: wakeAngle)
+                let snappedWakeMins = ((wakeMins + 7) / 15) * 15
+
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    bedAngle = Double(snappedBedMins % 1440) / 1440.0 * 2.0 * .pi
+                    wakeAngle = Double(snappedWakeMins % 1440) / 1440.0 * 2.0 * .pi
                     bedAngle = displayBedAngle
                     wakeAngle = displayWakeAngle
                 }
