@@ -178,7 +178,7 @@ struct SleepSliderView: View {
                     .position(center)
 
                 // Clock tick marks & labels
-                clockFace(center: center, outerRadius: outerRadius, midRadius: midRadius)
+                clockFace(center: center, midRadius: midRadius)
 
                 // Filled sleep arc
                 sleepArc(center: center, radius: midRadius)
@@ -217,34 +217,14 @@ struct SleepSliderView: View {
 
     // MARK: - Clock Face
 
-    private func clockFace(center: CGPoint, outerRadius: CGFloat, midRadius: CGFloat) -> some View {
+    private func clockFace(center: CGPoint, midRadius: CGFloat) -> some View {
         // Labels sit inside the ring, icons sit further in near center
         let innerRingEdge = midRadius - ringWidth / 2
         let labelRadius = innerRingEdge - 16
         let iconRadius = innerRingEdge - 40
 
         return ZStack {
-            // Hour tick marks — sit just outside the outer ring edge
-            ForEach(0..<24, id: \.self) { hour in
-                let tickAngle = Double(hour) / 24.0 * 2.0 * .pi - .pi / 2
-                let isMajor = hour % 6 == 0
-                let tickLength: CGFloat = isMajor ? 10 : 5
-                let outerRingEdge = midRadius + ringWidth / 2
-                let tickOuter = outerRingEdge + 2 + tickLength
-                let tickInner = outerRingEdge + 2
-
-                Path { path in
-                    path.move(to: CGPoint(
-                        x: center.x + cos(tickAngle) * tickOuter,
-                        y: center.y + sin(tickAngle) * tickOuter
-                    ))
-                    path.addLine(to: CGPoint(
-                        x: center.x + cos(tickAngle) * tickInner,
-                        y: center.y + sin(tickAngle) * tickInner
-                    ))
-                }
-                .stroke(Color.white.opacity(isMajor ? 0.4 : 0.15), lineWidth: isMajor ? 2 : 1)
-            }
+            hourTickMarks(center: center, midRadius: midRadius)
 
             // Cardinal labels — inside the ring
             clockLabel("12AM", angle: -.pi / 2, radius: labelRadius, center: center)
@@ -270,6 +250,33 @@ struct SleepSliderView: View {
                     y: center.y + iconRadius
                 )
         }
+    }
+
+    private func hourTickMarks(center: CGPoint, midRadius: CGFloat) -> some View {
+        ForEach(0..<24, id: \.self) { hour in
+            hourTick(hour: hour, center: center, midRadius: midRadius)
+        }
+    }
+
+    private func hourTick(hour: Int, center: CGPoint, midRadius: CGFloat) -> some View {
+        let tickAngle = Double(hour) / 24.0 * 2.0 * .pi - .pi / 2
+        let isMajor = hour % 6 == 0
+        let tickLength: CGFloat = isMajor ? 10 : 5
+        let outerRingEdge = midRadius + ringWidth / 2
+        let tickOuter = outerRingEdge + 2 + tickLength
+        let tickInner = outerRingEdge + 2
+
+        return Path { path in
+            path.move(to: CGPoint(
+                x: center.x + cos(tickAngle) * tickOuter,
+                y: center.y + sin(tickAngle) * tickOuter
+            ))
+            path.addLine(to: CGPoint(
+                x: center.x + cos(tickAngle) * tickInner,
+                y: center.y + sin(tickAngle) * tickInner
+            ))
+        }
+        .stroke(Color.white.opacity(isMajor ? 0.4 : 0.15), lineWidth: isMajor ? 2 : 1)
     }
 
     private func clockLabel(_ text: String, angle: Double, radius: CGFloat, center: CGPoint) -> some View {
@@ -379,26 +386,43 @@ struct SleepSliderView: View {
     private func remSegmentDividers(center: CGPoint, radius: CGFloat) -> some View {
         let count = cycleCount
         let cycleFraction = Double(profile.remCycleMinutes) / 1440.0 * 2.0 * .pi
+        let fallAsleepOffset = Double(profile.fallAsleepMinutes) / 1440.0 * 2.0 * .pi
 
         return ForEach(1..<count, id: \.self) { i in
-            let divAngle = displayBedAngle + Double(profile.fallAsleepMinutes) / 1440.0 * 2.0 * .pi + cycleFraction * Double(i)
-            let swAngle = divAngle - .pi / 2
-
-            Path { path in
-                let innerR = radius - ringWidth / 2 + 4
-                let outerR = radius + ringWidth / 2 - 4
-                path.move(to: CGPoint(
-                    x: center.x + cos(swAngle) * innerR,
-                    y: center.y + sin(swAngle) * innerR
-                ))
-                path.addLine(to: CGPoint(
-                    x: center.x + cos(swAngle) * outerR,
-                    y: center.y + sin(swAngle) * outerR
-                ))
-            }
-            .stroke(Color.white.opacity(0.6), lineWidth: 2)
+            remDivider(
+                index: i,
+                center: center,
+                radius: radius,
+                cycleFraction: cycleFraction,
+                fallAsleepOffset: fallAsleepOffset
+            )
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: count)
         }
+    }
+
+    private func remDivider(
+        index: Int,
+        center: CGPoint,
+        radius: CGFloat,
+        cycleFraction: Double,
+        fallAsleepOffset: Double
+    ) -> some View {
+        let divAngle = displayBedAngle + fallAsleepOffset + cycleFraction * Double(index)
+        let swAngle = divAngle - .pi / 2
+        let innerR = radius - ringWidth / 2 + 4
+        let outerR = radius + ringWidth / 2 - 4
+
+        return Path { path in
+            path.move(to: CGPoint(
+                x: center.x + cos(swAngle) * innerR,
+                y: center.y + sin(swAngle) * innerR
+            ))
+            path.addLine(to: CGPoint(
+                x: center.x + cos(swAngle) * outerR,
+                y: center.y + sin(swAngle) * outerR
+            ))
+        }
+        .stroke(Color.white.opacity(0.6), lineWidth: 2)
     }
 
     // MARK: - Handle
