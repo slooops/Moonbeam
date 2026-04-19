@@ -22,6 +22,6 @@ extension View {
     func moonbeamCard() -> some View {
         self
             .padding(20)
-            .glassEffect(.regular.tint(.indigo.opacity(0.15)), in: .rect(cornerRadius: 24))
+            .glassEffect(.regular.tint(Color("DeepSpace").opacity(0.55)), in: .rect(cornerRadius: 24))
     }
 }

@@ -291,6 +291,14 @@ struct SleepSliderView: View {
 
     // MARK: - Sleep Arc
 
+    /// Stroke width for tier `i` (0 = thinnest at bedtime) out of `tierCount` segments.
+    private func tierArcLineWidth(tierIndex: Int, tierCount: Int) -> CGFloat {
+        let minW = ringWidth * 0.48
+        let maxW = ringWidth
+        guard tierCount > 1 else { return maxW }
+        return minW + (maxW - minW) * CGFloat(tierIndex) / CGFloat(tierCount - 1)
+    }
+
     private func sleepArc(center: CGPoint, radius: CGFloat) -> some View {
         // Convert from our 24-hr convention (0 = 12AM top) to SwiftUI angles (0 = right)
         let startSwiftUI = displayBedAngle - .pi / 2
@@ -302,6 +310,13 @@ struct SleepSliderView: View {
 
         // Trim fraction: what portion of the circle the arc covers
         let trimEnd = CGFloat(arcSpan / (2 * .pi))
+
+        let totalMinutes = max(
+            SleepCalculator.durationMinutes(bedAngle: displayBedAngle, wakeAngle: displayWakeAngle),
+            0.000_1
+        )
+        let cycleM = profile.remCycleMinutes
+        let segmentCount = max(1, Int(ceil(totalMinutes / Double(cycleM))))
 
         // Sunset -> midnight -> sunrise color stops
         let gradientColors: [Color] = [
@@ -327,38 +342,47 @@ struct SleepSliderView: View {
         )
 
         return ZStack {
-            // Glow layer behind the arc for depth
-            Circle()
-                .trim(from: 0, to: trimEnd)
-                .stroke(gradient, style: StrokeStyle(lineWidth: ringWidth + 12, lineCap: .round))
-                .blur(radius: 10)
-                .opacity(0.35)
-                .frame(width: radius * 2, height: radius * 2)
-                .rotationEffect(.radians(startSwiftUI))
-                .position(center)
+            ForEach(0..<segmentCount, id: \.self) { i in
+                let minuteStart = Double(i * cycleM)
+                let minuteEnd = min(Double((i + 1) * cycleM), totalMinutes)
+                let trimFrom = CGFloat(minuteStart / totalMinutes) * trimEnd
+                let trimTo = CGFloat(minuteEnd / totalMinutes) * trimEnd
+                let tierW = tierArcLineWidth(tierIndex: i, tierCount: segmentCount)
+                let highlightW = max(4, tierW - 8)
 
-            // Main arc — sunset at bedtime -> midnight -> sunrise at wake
-            Circle()
-                .trim(from: 0, to: trimEnd)
-                .stroke(gradient, style: StrokeStyle(lineWidth: ringWidth, lineCap: .round))
-                .frame(width: radius * 2, height: radius * 2)
-                .rotationEffect(.radians(startSwiftUI))
-                .position(center)
+                // Glow layer behind each tier for depth
+                Circle()
+                    .trim(from: trimFrom, to: trimTo)
+                    .stroke(gradient, style: StrokeStyle(lineWidth: tierW + 12, lineCap: .round))
+                    .blur(radius: 10)
+                    .opacity(0.35)
+                    .frame(width: radius * 2, height: radius * 2)
+                    .rotationEffect(.radians(startSwiftUI))
+                    .position(center)
 
-            // Top highlight on the arc for 3D roundness
-            Circle()
-                .trim(from: 0, to: trimEnd)
-                .stroke(
-                    LinearGradient(
-                        colors: [.white.opacity(0.2), .clear],
-                        startPoint: .top,
-                        endPoint: .center
-                    ),
-                    style: StrokeStyle(lineWidth: ringWidth - 8, lineCap: .round)
-                )
-                .frame(width: radius * 2, height: radius * 2)
-                .rotationEffect(.radians(startSwiftUI))
-                .position(center)
+                // Main arc — each cycle-length segment is wider than the last (tiered toward wake)
+                Circle()
+                    .trim(from: trimFrom, to: trimTo)
+                    .stroke(gradient, style: StrokeStyle(lineWidth: tierW, lineCap: .round))
+                    .frame(width: radius * 2, height: radius * 2)
+                    .rotationEffect(.radians(startSwiftUI))
+                    .position(center)
+
+                // Top highlight on the arc for 3D roundness
+                Circle()
+                    .trim(from: trimFrom, to: trimTo)
+                    .stroke(
+                        LinearGradient(
+                            colors: [.white.opacity(0.2), .clear],
+                            startPoint: .top,
+                            endPoint: .center
+                        ),
+                        style: StrokeStyle(lineWidth: highlightW, lineCap: .round)
+                    )
+                    .frame(width: radius * 2, height: radius * 2)
+                    .rotationEffect(.radians(startSwiftUI))
+                    .position(center)
+            }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: displayWakeAngle)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: displayBedAngle)
