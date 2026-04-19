@@ -19,4 +19,5 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(SleepProfile())
+        .environmentObject(JetLagTripStore())
 }

@@ -10,11 +10,13 @@ import SwiftUI
 @main
 struct MoonbeamApp: App {
     @StateObject private var profile = SleepProfile()
+    @StateObject private var jetLagTrips = JetLagTripStore()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(profile)
+                .environmentObject(jetLagTrips)
         }
     }
 }
