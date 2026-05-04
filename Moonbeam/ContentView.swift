@@ -9,9 +9,29 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        NavigationStack {
-            MoonbeamMenuView()
+        TabView {
+            NavigationStack {
+                CycleTimerView()
+            }
+            .tabItem {
+                Label("Sleep", systemImage: "moon.zzz.fill")
+            }
+
+            NavigationStack {
+                JetLagView()
+            }
+            .tabItem {
+                Label("Jet Lag", systemImage: "airplane.departure")
+            }
+
+            NavigationStack {
+                SettingsView()
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
         }
+        .tint(.white)
         .preferredColorScheme(.dark)
     }
 }
@@ -20,4 +40,5 @@ struct ContentView: View {
     ContentView()
         .environmentObject(SleepProfile())
         .environmentObject(JetLagTripStore())
+        .environmentObject(SunTimesService())
 }

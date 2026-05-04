@@ -7,6 +7,7 @@ import SwiftUI
 
 struct SleepSliderView: View {
     @EnvironmentObject private var profile: SleepProfile
+    @EnvironmentObject private var sunTimes: SunTimesService
 
     // Angles in radians on 24-hr dial (0 = 12 AM at top, clockwise)
     @State private var bedAngle: Double = SleepCalculator.angle(
@@ -47,11 +48,8 @@ struct SleepSliderView: View {
         snappedSleepMinutes + profile.fallAsleepMinutes
     }
 
-    // The "display" angles — whichever handle is being dragged stays put,
-    // the other snaps to the nearest whole-cycle position.
     private var displayBedAngle: Double {
         if lastDragged == .wake {
-            // Wake is the anchor; compute bed from wake
             let wakeMins = SleepCalculator.minutesSinceMidnight(from: wakeAngle)
             let bedMins = (wakeMins - totalSleepMinutes + 1440) % 1440
             return Double(bedMins) / 1440.0 * 2.0 * .pi
@@ -61,7 +59,6 @@ struct SleepSliderView: View {
 
     private var displayWakeAngle: Double {
         if lastDragged == .bed {
-            // Bed is the anchor; compute wake from bed
             let bedMins = SleepCalculator.minutesSinceMidnight(from: bedAngle)
             let wakeMins = (bedMins + totalSleepMinutes) % 1440
             return Double(wakeMins) / 1440.0 * 2.0 * .pi
@@ -76,6 +73,10 @@ struct SleepSliderView: View {
     private var displayWakeMinutes: Int {
         SleepCalculator.minutesSinceMidnight(from: displayWakeAngle)
     }
+
+    // Public accessors for alarm scheduling
+    var currentBedMinutes: Int { displayBedMinutes }
+    var currentWakeMinutes: Int { displayWakeMinutes }
 
     var body: some View {
         VStack(spacing: 20) {
@@ -117,12 +118,22 @@ struct SleepSliderView: View {
     // MARK: - Duration Label
 
     private var durationLabel: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             Text(SleepCalculator.formattedDuration(minutes: totalSleepMinutes))
                 .font(.title3.weight(.semibold).monospacedDigit())
             Text("\(cycleCount) REM cycle\(cycleCount == 1 ? "" : "s")")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        )
+                )
         }
         .contentTransition(.numericText())
     }
@@ -137,17 +148,13 @@ struct SleepSliderView: View {
             let midRadius = outerRadius - ringWidth / 2
 
             ZStack {
-                // 3D track ring — layered for depth
-                // Outer shadow (recessed groove)
-                Circle()
-                    .stroke(Color.black.opacity(0.4), lineWidth: ringWidth + 4)
-                    .blur(radius: 4)
-                    .frame(width: midRadius * 2, height: midRadius * 2)
-                    .position(center)
+                // Fixed background sky gradient ring
+                backgroundSkyRing(center: center, radius: midRadius)
 
-                // Base ring
+                // Recessed groove shadow
                 Circle()
-                    .stroke(Color.white.opacity(0.06), lineWidth: ringWidth)
+                    .stroke(Color.black.opacity(0.3), lineWidth: ringWidth + 4)
+                    .blur(radius: 4)
                     .frame(width: midRadius * 2, height: midRadius * 2)
                     .position(center)
 
@@ -155,7 +162,7 @@ struct SleepSliderView: View {
                 Circle()
                     .stroke(
                         LinearGradient(
-                            colors: [.white.opacity(0.12), .clear, .clear, .white.opacity(0.04)],
+                            colors: [.white.opacity(0.10), .clear, .clear, .white.opacity(0.03)],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
@@ -168,7 +175,7 @@ struct SleepSliderView: View {
                 Circle()
                     .stroke(
                         LinearGradient(
-                            colors: [.clear, .black.opacity(0.15), .black.opacity(0.2), .clear],
+                            colors: [.clear, .black.opacity(0.12), .black.opacity(0.15), .clear],
                             startPoint: .top,
                             endPoint: .bottom
                         ),
@@ -180,7 +187,7 @@ struct SleepSliderView: View {
                 // Clock tick marks & labels
                 clockFace(center: center, midRadius: midRadius)
 
-                // Filled sleep arc
+                // Glass sleep arc
                 sleepArc(center: center, radius: midRadius)
 
                 // REM segment dividers
@@ -215,41 +222,127 @@ struct SleepSliderView: View {
         .aspectRatio(1, contentMode: .fit)
     }
 
+    // MARK: - Background Sky Ring
+
+    private func backgroundSkyRing(center: CGPoint, radius: CGFloat) -> some View {
+        let sunrise = max(0.15, min(0.40, Double(sunTimes.sunriseMinutes) / 1440.0))
+        let sunset = max(0.60, min(0.92, Double(sunTimes.sunsetMinutes) / 1440.0))
+
+        let postSunrise = sunrise + 0.06
+        let midMorning = min((sunrise + 0.5) / 2 + 0.04, 0.48)
+        let midAfternoon = max((0.5 + sunset) / 2 - 0.02, 0.52)
+        let preSunset = sunset - 0.015
+
+        let gradient = AngularGradient(
+            stops: [
+                .init(color: Color(red: 0.06, green: 0.04, blue: 0.18), location: 0.0),
+                .init(color: Color(red: 0.08, green: 0.08, blue: 0.28), location: sunrise - 0.04),
+                .init(color: Color(red: 0.15, green: 0.25, blue: 0.50), location: sunrise - 0.015),
+                .init(color: Color(red: 0.45, green: 0.65, blue: 0.85), location: sunrise),
+                .init(color: Color(red: 0.62, green: 0.78, blue: 0.92), location: sunrise + 0.025),
+                .init(color: Color(red: 0.75, green: 0.85, blue: 0.95), location: postSunrise),
+                .init(color: Color(red: 0.85, green: 0.90, blue: 0.96), location: postSunrise + 0.03),
+                .init(color: Color(red: 0.90, green: 0.92, blue: 0.96), location: midMorning),
+                .init(color: Color(red: 0.92, green: 0.92, blue: 0.96), location: 0.5),
+                .init(color: Color(red: 0.90, green: 0.88, blue: 0.90), location: midAfternoon),
+                .init(color: Color(red: 0.92, green: 0.72, blue: 0.50), location: preSunset),
+                .init(color: Color(red: 0.90, green: 0.38, blue: 0.35), location: sunset),
+                .init(color: Color(red: 0.60, green: 0.20, blue: 0.42), location: sunset + 0.03),
+                .init(color: Color(red: 0.25, green: 0.10, blue: 0.32), location: sunset + 0.06),
+                .init(color: Color(red: 0.06, green: 0.04, blue: 0.18), location: 1.0),
+            ],
+            center: .center,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(270)
+        )
+
+        return Circle()
+            .stroke(gradient, lineWidth: ringWidth)
+            .frame(width: radius * 2, height: radius * 2)
+            .position(center)
+    }
+
     // MARK: - Clock Face
 
     private func clockFace(center: CGPoint, midRadius: CGFloat) -> some View {
-        // Labels sit inside the ring, icons sit further in near center
         let innerRingEdge = midRadius - ringWidth / 2
-        let labelRadius = innerRingEdge - 16
-        let iconRadius = innerRingEdge - 40
+        let labelRadius = innerRingEdge - 18
+        let sunTimeLabelRadius = innerRingEdge - 40
+        let iconRadius = innerRingEdge - 44
+
+        let sunriseText = SleepCalculator.formattedTime(minutesSinceMidnight: sunTimes.sunriseMinutes)
+        let sunsetText = SleepCalculator.formattedTime(minutesSinceMidnight: sunTimes.sunsetMinutes)
 
         return ZStack {
             hourTickMarks(center: center, midRadius: midRadius)
 
-            // Cardinal labels — inside the ring
             clockLabel("12AM", angle: -.pi / 2, radius: labelRadius, center: center)
-            clockLabel("6AM", angle: 0, radius: labelRadius, center: center)
-            clockLabel("12PM", angle: .pi / 2, radius: labelRadius, center: center)
-            clockLabel("6PM", angle: .pi, radius: labelRadius, center: center)
 
-            // Moon at top (12 AM) — well inside the dial
+            // Sunrise time + icon (right side, 6AM position)
+            sunTimeLabel(
+                time: sunriseText,
+                icon: "sunrise.fill",
+                iconColor: .orange.opacity(0.7),
+                angle: 0,
+                radius: sunTimeLabelRadius,
+                center: center,
+                iconTrailing: true
+            )
+
+            clockLabel("12PM", angle: .pi / 2, radius: labelRadius, center: center)
+
+            // Sunset time + icon (left side, 6PM position)
+            sunTimeLabel(
+                time: sunsetText,
+                icon: "sunset.fill",
+                iconColor: .orange.opacity(0.6),
+                angle: .pi,
+                radius: sunTimeLabelRadius,
+                center: center,
+                iconTrailing: false
+            )
+
             Image(systemName: "moon.fill")
                 .font(.system(size: 16))
                 .foregroundStyle(.indigo.opacity(0.7))
-                .position(
-                    x: center.x,
-                    y: center.y - iconRadius
-                )
+                .position(x: center.x, y: center.y - iconRadius)
 
-            // Sun at bottom (12 PM) — well inside the dial
             Image(systemName: "sun.max.fill")
                 .font(.system(size: 16))
                 .foregroundStyle(.yellow.opacity(0.7))
-                .position(
-                    x: center.x,
-                    y: center.y + iconRadius
-                )
+                .position(x: center.x, y: center.y + iconRadius)
         }
+    }
+
+    /// Displays a sunrise/sunset time with an icon beside it on the dial
+    private func sunTimeLabel(
+        time: String,
+        icon: String,
+        iconColor: Color,
+        angle: Double,
+        radius: CGFloat,
+        center: CGPoint,
+        iconTrailing: Bool
+    ) -> some View {
+        let x = center.x + cos(angle) * radius
+        let y = center.y + sin(angle) * radius
+
+        return HStack(spacing: 4) {
+            if !iconTrailing {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(iconColor)
+            }
+            Text(time)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+            if iconTrailing {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(iconColor)
+            }
+        }
+        .position(x: x, y: y)
     }
 
     private func hourTickMarks(center: CGPoint, midRadius: CGFloat) -> some View {
@@ -289,100 +382,65 @@ struct SleepSliderView: View {
             )
     }
 
-    // MARK: - Sleep Arc
-
-    /// Stroke width for tier `i` (0 = thinnest at bedtime) out of `tierCount` segments.
-    private func tierArcLineWidth(tierIndex: Int, tierCount: Int) -> CGFloat {
-        let minW = ringWidth * 0.48
-        let maxW = ringWidth
-        guard tierCount > 1 else { return maxW }
-        return minW + (maxW - minW) * CGFloat(tierIndex) / CGFloat(tierCount - 1)
-    }
+    // MARK: - Sleep Arc (Glass Look — Continuous Fill)
 
     private func sleepArc(center: CGPoint, radius: CGFloat) -> some View {
-        // Convert from our 24-hr convention (0 = 12AM top) to SwiftUI angles (0 = right)
         let startSwiftUI = displayBedAngle - .pi / 2
         let endSwiftUI = displayWakeAngle - .pi / 2
 
-        // Arc span — always positive, handles wrapping past 6 AM (0°)
         var arcSpan = endSwiftUI - startSwiftUI
         if arcSpan <= 0 { arcSpan += 2 * .pi }
 
-        // Trim fraction: what portion of the circle the arc covers
         let trimEnd = CGFloat(arcSpan / (2 * .pi))
 
-        let totalMinutes = max(
-            SleepCalculator.durationMinutes(bedAngle: displayBedAngle, wakeAngle: displayWakeAngle),
-            0.000_1
-        )
-        let cycleM = profile.remCycleMinutes
-        let segmentCount = max(1, Int(ceil(totalMinutes / Double(cycleM))))
-
-        // Sunset -> midnight -> sunrise color stops
-        let gradientColors: [Color] = [
-            Color(red: 0.95, green: 0.45, blue: 0.20),  // sunset orange
-            Color(red: 0.85, green: 0.28, blue: 0.35),  // warm rose
-            Color(red: 0.65, green: 0.22, blue: 0.55),  // plum
-            Color(red: 0.45, green: 0.20, blue: 0.65),  // purple
-            Color(red: 0.35, green: 0.25, blue: 0.70),  // deep violet (midnight)
-            Color(red: 0.30, green: 0.30, blue: 0.72),  // midnight blue-violet
-            Color(red: 0.25, green: 0.38, blue: 0.75),  // deep blue
-            Color(red: 0.25, green: 0.50, blue: 0.80),  // pre-dawn blue
-            Color(red: 0.35, green: 0.65, blue: 0.85),  // morning sky
-            Color(red: 0.55, green: 0.78, blue: 0.60),  // dawn green-gold
-            Color(red: 0.85, green: 0.75, blue: 0.35),  // sunrise amber
-        ]
-
-        // Gradient from 0 to arcSpan — never crosses the 0°/360° seam
-        let gradient = AngularGradient(
-            colors: gradientColors,
-            center: .center,
-            startAngle: .zero,
-            endAngle: .radians(arcSpan)
-        )
-
         return ZStack {
-            ForEach(0..<segmentCount, id: \.self) { i in
-                let minuteStart = Double(i * cycleM)
-                let minuteEnd = min(Double((i + 1) * cycleM), totalMinutes)
-                let trimFrom = CGFloat(minuteStart / totalMinutes) * trimEnd
-                let trimTo = CGFloat(minuteEnd / totalMinutes) * trimEnd
-                let tierW = tierArcLineWidth(tierIndex: i, tierCount: segmentCount)
-                let highlightW = max(4, tierW - 8)
+            // Soft glow behind — single continuous arc
+            Circle()
+                .trim(from: 0, to: trimEnd)
+                .stroke(Color.white.opacity(0.03), style: StrokeStyle(lineWidth: ringWidth + 10, lineCap: .butt))
+                .blur(radius: 10)
+                .frame(width: radius * 2, height: radius * 2)
+                .rotationEffect(.radians(startSwiftUI))
+                .position(center)
 
-                // Glow layer behind each tier for depth
-                Circle()
-                    .trim(from: trimFrom, to: trimTo)
-                    .stroke(gradient, style: StrokeStyle(lineWidth: tierW + 12, lineCap: .round))
-                    .blur(radius: 10)
-                    .opacity(0.35)
-                    .frame(width: radius * 2, height: radius * 2)
-                    .rotationEffect(.radians(startSwiftUI))
-                    .position(center)
+            // Main glass arc — lighter, more translucent
+            Circle()
+                .trim(from: 0, to: trimEnd)
+                .stroke(Color.white.opacity(0.05), style: StrokeStyle(lineWidth: ringWidth, lineCap: .butt))
+                .frame(width: radius * 2, height: radius * 2)
+                .rotationEffect(.radians(startSwiftUI))
+                .position(center)
 
-                // Main arc — each cycle-length segment is wider than the last (tiered toward wake)
-                Circle()
-                    .trim(from: trimFrom, to: trimTo)
-                    .stroke(gradient, style: StrokeStyle(lineWidth: tierW, lineCap: .round))
-                    .frame(width: radius * 2, height: radius * 2)
-                    .rotationEffect(.radians(startSwiftUI))
-                    .position(center)
+            // Top highlight for raised glass look — brighter specular
+            Circle()
+                .trim(from: 0, to: trimEnd)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.35), .white.opacity(0.06), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    style: StrokeStyle(lineWidth: max(4, ringWidth - 8), lineCap: .butt)
+                )
+                .frame(width: radius * 2, height: radius * 2)
+                .rotationEffect(.radians(startSwiftUI))
+                .position(center)
 
-                // Top highlight on the arc for 3D roundness
-                Circle()
-                    .trim(from: trimFrom, to: trimTo)
-                    .stroke(
-                        LinearGradient(
-                            colors: [.white.opacity(0.2), .clear],
-                            startPoint: .top,
-                            endPoint: .center
-                        ),
-                        style: StrokeStyle(lineWidth: highlightW, lineCap: .round)
-                    )
-                    .frame(width: radius * 2, height: radius * 2)
-                    .rotationEffect(.radians(startSwiftUI))
-                    .position(center)
-            }
+            // Outer rim highlight
+            Circle()
+                .trim(from: 0, to: trimEnd)
+                .stroke(Color.white.opacity(0.22), style: StrokeStyle(lineWidth: 1, lineCap: .butt))
+                .frame(width: (radius + ringWidth / 2 - 1) * 2, height: (radius + ringWidth / 2 - 1) * 2)
+                .rotationEffect(.radians(startSwiftUI))
+                .position(center)
+
+            // Inner rim highlight
+            Circle()
+                .trim(from: 0, to: trimEnd)
+                .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 0.75, lineCap: .butt))
+                .frame(width: (radius - ringWidth / 2 + 1) * 2, height: (radius - ringWidth / 2 + 1) * 2)
+                .rotationEffect(.radians(startSwiftUI))
+                .position(center)
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: displayWakeAngle)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: displayBedAngle)
@@ -465,6 +523,18 @@ struct SleepSliderView: View {
                     .fill(.ultraThinMaterial)
                     .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
             )
+            .overlay(
+                Circle()
+                    .stroke(
+                        LinearGradient(
+                            colors: [.white.opacity(0.45), .white.opacity(0.08)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.5
+                    )
+                    .frame(width: handleSize, height: handleSize)
+            )
             .scaleEffect(isDragging ? 1.15 : 1.0)
             .animation(.spring(response: 0.3), value: isDragging)
             .position(x: x, y: y)
@@ -477,10 +547,9 @@ struct SleepSliderView: View {
             .onChanged { value in
                 let dx = value.location.x - center.x
                 let dy = value.location.y - center.y
-                var angle = atan2(dy, dx) + .pi / 2 // convert from SwiftUI coords to our convention
+                var angle = atan2(dy, dx) + .pi / 2
                 if angle < 0 { angle += 2 * .pi }
 
-                // Both handles get 15-min granular control
                 let mins = SleepCalculator.minutesSinceMidnight(from: angle)
                 let snappedMins = (mins / 15) * 15
                 let snappedAngle = Double(snappedMins) / 1440.0 * 2.0 * .pi
@@ -496,7 +565,6 @@ struct SleepSliderView: View {
                     wakeAngle = snappedAngle
                 }
 
-                // Check for cycle boundary crossing -> haptic
                 let newCycles = cycleCount
                 if newCycles != lastSnappedCycles {
                     haptic.impactOccurred()
@@ -506,7 +574,6 @@ struct SleepSliderView: View {
                 }
             }
             .onEnded { _ in
-                // Sync both raw angles to their display (snapped) positions
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     bedAngle = displayBedAngle
                     wakeAngle = displayWakeAngle
@@ -516,7 +583,7 @@ struct SleepSliderView: View {
             }
     }
 
-    // MARK: - Arc Drag Gesture (whole-window slide)
+    // MARK: - Arc Drag Gesture
 
     private func arcDragGesture(center: CGPoint) -> some Gesture {
         DragGesture(minimumDistance: 5)
@@ -532,12 +599,10 @@ struct SleepSliderView: View {
                     return
                 }
 
-                // Compute angular delta, clamped to avoid big jumps across 0/2pi
                 var delta = currentAngle - arcDragPreviousAngle
                 if delta > .pi { delta -= 2 * .pi }
                 if delta < -.pi { delta += 2 * .pi }
 
-                // Shift both angles continuously — no per-frame snapping
                 bedAngle = (bedAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
                 wakeAngle = (wakeAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
                 if bedAngle < 0 { bedAngle += 2 * .pi }
@@ -547,9 +612,8 @@ struct SleepSliderView: View {
             }
             .onEnded { _ in
                 isDraggingArc = false
-                // Snap to 15-min grid on release
                 let bedMins = SleepCalculator.minutesSinceMidnight(from: bedAngle)
-                let snappedBedMins = ((bedMins + 7) / 15) * 15  // round to nearest
+                let snappedBedMins = ((bedMins + 7) / 15) * 15
                 let wakeMins = SleepCalculator.minutesSinceMidnight(from: wakeAngle)
                 let snappedWakeMins = ((wakeMins + 7) / 15) * 15
 
@@ -584,6 +648,7 @@ struct SleepSliderView: View {
         Color.clear.moonbeamBackground()
         SleepSliderView()
             .environmentObject(SleepProfile())
+            .environmentObject(SunTimesService())
             .foregroundColor(.white)
             .padding()
     }

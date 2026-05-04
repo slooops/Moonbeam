@@ -9,6 +9,7 @@ struct CycleTimerView: View {
     @EnvironmentObject private var profile: SleepProfile
     @State private var showingProfile = false
     @State private var slider = SleepSliderView()
+    @State private var alarmSet = false
 
     var body: some View {
         ZStack {
@@ -21,15 +22,39 @@ struct CycleTimerView: View {
                     }
                     .moonbeamCard()
 
-                    Button {
-                        slider.sleepNow()
-                    } label: {
-                        Label("Sleep Now", systemImage: "moon.zzz.fill")
+                    HStack(spacing: 14) {
+                        Button {
+                            slider.sleepNow()
+                        } label: {
+                            Label("Sleep Now", systemImage: "moon.zzz.fill")
+                                .font(.headline)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.glass)
+
+                        Button {
+                            Task {
+                                await AlarmService.shared.scheduleSleepAlarm(
+                                    bedMinutes: slider.currentBedMinutes,
+                                    wakeMinutes: slider.currentWakeMinutes,
+                                    label: "Sleep Cycle"
+                                )
+                                withAnimation { alarmSet = true }
+                                try? await Task.sleep(for: .seconds(3))
+                                withAnimation { alarmSet = false }
+                            }
+                        } label: {
+                            Label(
+                                alarmSet ? "Alarm Set" : "Set Alarm",
+                                systemImage: alarmSet ? "checkmark.circle.fill" : "alarm.fill"
+                            )
                             .font(.headline)
-                            .padding(.horizontal, 24)
+                            .padding(.horizontal, 20)
                             .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.glass)
                     }
-                    .buttonStyle(.glass)
                 }
                 .padding()
             }
@@ -38,22 +63,13 @@ struct CycleTimerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Label("Moonbeam", systemImage: "moon.stars.fill")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showingProfile = true
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundStyle(.white.opacity(0.8))
+                HStack(spacing: 6) {
+                    Image(systemName: "moon.stars.fill")
+                    Text("Moonbeam")
                 }
+                .font(.headline)
+                .foregroundStyle(.white)
             }
-        }
-        .sheet(isPresented: $showingProfile) {
-            SleepProfileView()
-                .environmentObject(profile)
         }
     }
 }
@@ -63,4 +79,5 @@ struct CycleTimerView: View {
         CycleTimerView()
     }
     .environmentObject(SleepProfile())
+    .environmentObject(SunTimesService())
 }

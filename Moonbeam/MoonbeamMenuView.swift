@@ -95,9 +95,14 @@ struct ComingSoonPlaceholderView: View {
             Color.clear.moonbeamBackground()
 
             VStack(spacing: 12) {
-                Image(systemName: "moon.stars")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.white.opacity(0.35))
+                HStack(spacing: 12) {
+                    Image(systemName: "moon.stars")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Text("Moonbeam")
+                        .font(.system(size: 44, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
                 Text("Coming soon")
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.white.opacity(0.55))

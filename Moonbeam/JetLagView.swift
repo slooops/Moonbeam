@@ -6,221 +6,176 @@
 import SwiftUI
 
 struct JetLagView: View {
-    @EnvironmentObject private var tripStore: JetLagTripStore
-    @State private var showingFlightEntry = false
+    @EnvironmentObject private var sunTimes: SunTimesService
+    @State private var destinationCity: String = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var plan: JetLagPlan?
+    @State private var showingPlan = false
 
     var body: some View {
         ZStack {
             Color.clear.moonbeamBackground()
 
-            if tripStore.trips.isEmpty {
-                ScrollView {
-                    VStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Your trips", systemImage: "airplane")
-                                .font(.headline)
-                            Text("Add a flight to start planning light exposure and sleep shifts.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .moonbeamCard()
-                    }
-                    .padding()
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Your trips", systemImage: "airplane")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 22)
-                        .padding(.top, 8)
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Destination entry
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Where are you flying?", systemImage: "airplane.departure")
+                            .font(.headline)
 
-                    List {
-                        ForEach(tripStore.trips) { trip in
-                            JetLagTripRow(trip: trip)
-                                .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
+                        TextField("Destination city (e.g. Tokyo, London)", text: $destinationCity)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled(false)
+                            .font(.body)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 16)
+                            .background(
+                                Capsule()
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                                    )
+                            )
+
+                        if let error = errorMessage {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
                         }
-                        .onDelete(perform: tripStore.deleteTrips)
+
+                        Button {
+                            Task { await generatePlan() }
+                        } label: {
+                            HStack {
+                                if isLoading {
+                                    ProgressView()
+                                        .tint(.white)
+                                } else {
+                                    Label("Generate Plan", systemImage: "sparkles")
+                                }
+                            }
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.glass)
+                        .disabled(destinationCity.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .moonbeamCard()
+
+                    // How it works
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("How it works", systemImage: "info.circle")
+                            .font(.subheadline.weight(.semibold))
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            bulletPoint("1", "Enter your destination city")
+                            bulletPoint("2", "We calculate the timezone shift and create a 3-night plan")
+                            bulletPoint("3", "Each night shifts your sleep closer to destination time")
+                            bulletPoint("4", "Set alarms for each night and arrive refreshed")
+                        }
+                    }
+                    .moonbeamCard()
+
+                    // Show current plan if exists
+                    if let plan = plan {
+                        NavigationLink {
+                            JetLagPlanView(plan: plan) { day in
+                                Task {
+                                    await AlarmService.shared.scheduleJetLagAlarms(
+                                        day: day,
+                                        nightLabel: "Night \(day.dayIndex + 1)"
+                                    )
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Active Plan: \(plan.destinationCity)")
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("Tap to view your transition plan")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .moonbeamCard()
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding()
             }
         }
         .navigationTitle("Jet Lag")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showingFlightEntry = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.95))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
-                        .glassEffect(.regular.tint(Color("DeepSpace").opacity(0.55)), in: Circle())
+        .navigationDestination(isPresented: $showingPlan) {
+            if let plan = plan {
+                JetLagPlanView(plan: plan) { day in
+                    Task {
+                        await AlarmService.shared.scheduleJetLagAlarms(
+                            day: day,
+                            nightLabel: "Night \(day.dayIndex + 1)"
+                        )
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add flight")
             }
         }
-        .sheet(isPresented: $showingFlightEntry) {
-            FlightDetailsEntryView()
-                .environmentObject(tripStore)
-        }
-    }
-}
-
-private struct JetLagTripRow: View {
-    let trip: JetLagTrip
-
-    private var routeTitle: String {
-        let d = trip.departureAirport
-        let a = trip.arrivalAirport
-        switch (d.isEmpty, a.isEmpty) {
-        case (false, false): return "\(d) → \(a)"
-        case (false, true): return d
-        case (true, false): return a
-        case (true, true): return "Flight"
-        }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(routeTitle)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
-
-            Text(trip.flightDate, format: .dateTime.weekday(.wide).month(.abbreviated).day().year())
-                .font(.subheadline)
+    private func bulletPoint(_ num: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(num)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(width: 16)
+            Text(text)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-
-            HStack(spacing: 6) {
-                Text("Out \(trip.departureTime, format: .dateTime.hour().minute())")
-                Text("·")
-                    .foregroundStyle(.tertiary)
-                Text("In \(trip.arrivalTime, format: .dateTime.hour().minute())")
-            }
-            .font(.subheadline.weight(.medium).monospacedDigit())
-            .foregroundStyle(.white.opacity(0.88))
-
-            if !trip.flightNumber.isEmpty {
-                Text(trip.flightNumber)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
-        .glassEffect(.regular.tint(Color("DeepSpace").opacity(0.5)), in: .rect(cornerRadius: 26))
-    }
-}
-
-private struct FlightDetailsEntryView: View {
-    @EnvironmentObject private var tripStore: JetLagTripStore
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var flightDate = Date()
-    @State private var departureAirport = ""
-    @State private var arrivalAirport = ""
-    @State private var departureTime = Date()
-    @State private var arrivalTime = Date()
-    @State private var flightNumber = ""
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.clear.moonbeamBackground()
-
-                ScrollView {
-                    VStack(spacing: 20) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("Flight date", systemImage: "calendar")
-                                .font(.headline)
-
-                            DatePicker(
-                                "Day",
-                                selection: $flightDate,
-                                displayedComponents: .date
-                            )
-                            .labelsHidden()
-                            .datePickerStyle(.graphical)
-                        }
-                        .moonbeamCard()
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("Airports", systemImage: "mappin.and.ellipse")
-                                .font(.headline)
-
-                            TextField("Departing airport (e.g. SFO)", text: $departureAirport)
-                                .textContentType(.none)
-                                .textInputAutocapitalization(.characters)
-
-                            TextField("Arriving airport (e.g. LHR)", text: $arrivalAirport)
-                                .textContentType(.none)
-                                .textInputAutocapitalization(.characters)
-                        }
-                        .moonbeamCard()
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("Times (local)", systemImage: "clock")
-                                .font(.headline)
-
-                            DatePicker("Departure time", selection: $departureTime, displayedComponents: .hourAndMinute)
-
-                            DatePicker("Arrival time", selection: $arrivalTime, displayedComponents: .hourAndMinute)
-                        }
-                        .moonbeamCard()
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("Flight", systemImage: "airplane.departure")
-                                .font(.headline)
-
-                            TextField("Flight number (e.g. BA 117)", text: $flightNumber)
-                                .textInputAutocapitalization(.characters)
-                        }
-                        .moonbeamCard()
-                    }
-                    .padding()
-                }
-            }
-            .navigationTitle("Flight details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        saveTrip()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
     }
 
-    private func saveTrip() {
-        let trip = JetLagTrip(
-            flightDate: flightDate,
-            departureAirport: departureAirport.trimmingCharacters(in: .whitespacesAndNewlines),
-            arrivalAirport: arrivalAirport.trimmingCharacters(in: .whitespacesAndNewlines),
-            departureTime: departureTime,
-            arrivalTime: arrivalTime,
-            flightNumber: flightNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        tripStore.add(trip)
-        dismiss()
+    // MARK: - Generate Plan
+
+    private func generatePlan() async {
+        let city = destinationCity.trimmingCharacters(in: .whitespaces)
+        guard !city.isEmpty else { return }
+
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            // Resolve city to timezone and coordinates
+            let resolved = try await JetLagPlanCalculator.resolveCity(city)
+
+            // Fetch destination sun times
+            let destSun = await JetLagPlanCalculator.fetchSunTimes(lat: resolved.lat, lng: resolved.lng)
+
+            // Get local timezone offset
+            let localOffset = TimeZone.current.secondsFromGMT() / 3600
+
+            // Generate plan
+            let newPlan = JetLagPlanCalculator.generatePlan(
+                destinationCity: resolved.name,
+                localSunrise: sunTimes.sunriseMinutes,
+                localSunset: sunTimes.sunsetMinutes,
+                destSunrise: destSun.sunrise,
+                destSunset: destSun.sunset,
+                localOffsetHours: localOffset,
+                destOffsetHours: resolved.offsetHours
+            )
+
+            plan = newPlan
+            showingPlan = true
+            isLoading = false
+        } catch {
+            errorMessage = error.localizedDescription
+            isLoading = false
+        }
     }
 }
 
@@ -228,5 +183,5 @@ private struct FlightDetailsEntryView: View {
     NavigationStack {
         JetLagView()
     }
-    .environmentObject(JetLagTripStore())
+    .environmentObject(SunTimesService())
 }
