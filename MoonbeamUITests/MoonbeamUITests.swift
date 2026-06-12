@@ -10,32 +10,49 @@ import XCTest
 final class MoonbeamUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testJetLagPlanFlow() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        app.tabBars.buttons["Jet Lag"].tap()
+
+        let destinationField = app.textFields["City or airport code (e.g. Tokyo, LHR)"]
+        XCTAssertTrue(destinationField.waitForExistence(timeout: 5))
+        destinationField.tap()
+        destinationField.typeText("LHR")
+
+        attach(app, name: "1-jetlag-inputs")
+
+        app.buttons["Generate Plan"].firstMatch.tap()
+
+        let planTitle = app.staticTexts["Transition Plan"]
+        XCTAssertTrue(planTitle.waitForExistence(timeout: 15))
+
+        // London resolved from the IATA table, not the geocoder.
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "London")).firstMatch.waitForExistence(timeout: 5))
+
+        attach(app, name: "2-plan-top")
+
+        app.swipeUp()
+        attach(app, name: "3-plan-bottom")
     }
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }
+    }
+
+    @MainActor
+    private func attach(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

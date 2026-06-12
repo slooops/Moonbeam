@@ -50,7 +50,23 @@ struct SettingsView: View {
             )
             .font(.body.monospacedDigit())
 
-            Text("Adjust your REM cycle length and how long it takes you to fall asleep.")
+            Divider().opacity(0.3)
+
+            HStack {
+                Text("Usual Bedtime")
+                Spacer()
+                DatePicker("", selection: timeBinding($profile.idealBedMinutes), displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+
+            HStack {
+                Text("Usual Wake-Up")
+                Spacer()
+                DatePicker("", selection: timeBinding($profile.idealWakeMinutes), displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+
+            Text("Adjust your REM cycle length and how long it takes you to fall asleep. Your usual sleep window sets how much sleep jet lag plans schedule each night.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -65,38 +81,41 @@ struct SettingsView: View {
                 .font(.headline)
 
             if alarmService.isAuthorized {
-                Label("Notifications enabled", systemImage: "checkmark.circle.fill")
+                Label("Alarms enabled", systemImage: "checkmark.circle.fill")
                     .font(.subheadline)
                     .foregroundStyle(.green)
             } else {
                 Button {
                     Task { await alarmService.requestAuthorization() }
                 } label: {
-                    Label("Enable Notifications", systemImage: "bell.badge")
+                    Label("Enable Alarms", systemImage: "bell.badge")
                         .font(.subheadline.weight(.medium))
                 }
             }
 
-            Divider().opacity(0.3)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Alarm Sound")
-                    .font(.subheadline.weight(.medium))
-
-                Picker("Sound", selection: $alarmService.alarmSoundName) {
-                    ForEach(AlarmService.availableSounds, id: \.name) { sound in
-                        Text(sound.label).tag(sound.name)
-                    }
-                }
-                .pickerStyle(.menu)
-                .tint(.white)
-            }
-
-            Text("Moonbeam uses local notifications for alarms. For richer alarm sounds, set a wake-up alarm in the Clock app alongside Moonbeam's notifications.")
+            Text("Wake-up alarms are real system alarms — they sound even in Silent mode, with full-screen snooze and stop. Bedtime reminders arrive as notifications.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .moonbeamCard()
+    }
+
+    /// Bridges minutes-since-midnight storage to a DatePicker's Date binding.
+    private func timeBinding(_ minutes: Binding<Int>) -> Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(
+                    bySettingHour: minutes.wrappedValue / 60,
+                    minute: minutes.wrappedValue % 60,
+                    second: 0,
+                    of: Date()
+                ) ?? Date()
+            },
+            set: { newDate in
+                let cal = Calendar.current
+                minutes.wrappedValue = cal.component(.hour, from: newDate) * 60 + cal.component(.minute, from: newDate)
+            }
+        )
     }
 
     // MARK: - HomeKit

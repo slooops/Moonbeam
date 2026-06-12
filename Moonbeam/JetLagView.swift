@@ -7,11 +7,29 @@ import SwiftUI
 
 struct JetLagView: View {
     @EnvironmentObject private var sunTimes: SunTimesService
+    @EnvironmentObject private var profile: SleepProfile
+    @State private var originQuery: String = ""
     @State private var destinationCity: String = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var plan: JetLagPlan?
     @State private var showingPlan = false
+
+    /// Generic zone name like "Pacific Time (GMT-7)". The identifier's city
+    /// ("Los Angeles") would usually be wrong — most users aren't in the city
+    /// their timezone is named after.
+    private static func timeZoneDisplayName(_ tz: TimeZone) -> String {
+        let name = tz.localizedName(for: .generic, locale: .current)
+            ?? tz.identifier.split(separator: "/").last.map {
+                $0.replacingOccurrences(of: "_", with: " ")
+            } ?? tz.identifier
+        let hours = tz.secondsFromGMT() / 3600
+        return "\(name) (GMT\(hours >= 0 ? "+" : "")\(hours))"
+    }
+
+    private var deviceTimeZoneLabel: String {
+        Self.timeZoneDisplayName(TimeZone.current)
+    }
 
     var body: some View {
         ZStack {
@@ -19,77 +37,12 @@ struct JetLagView: View {
 
             ScrollView {
                 VStack(spacing: 20) {
-                    // Destination entry
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Where are you flying?", systemImage: "airplane.departure")
-                            .font(.headline)
+                    tripEntrySection
+                    howItWorksSection
 
-                        TextField("Destination city (e.g. Tokyo, London)", text: $destinationCity)
-                            .textInputAutocapitalization(.words)
-                            .autocorrectionDisabled(false)
-                            .font(.body)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 16)
-                            .background(
-                                Capsule()
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                                    )
-                            )
-
-                        if let error = errorMessage {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-
-                        Button {
-                            Task { await generatePlan() }
-                        } label: {
-                            HStack {
-                                if isLoading {
-                                    ProgressView()
-                                        .tint(.white)
-                                } else {
-                                    Label("Generate Plan", systemImage: "sparkles")
-                                }
-                            }
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                        }
-                        .buttonStyle(.glass)
-                        .disabled(destinationCity.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
-                    }
-                    .moonbeamCard()
-
-                    // How it works
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("How it works", systemImage: "info.circle")
-                            .font(.subheadline.weight(.semibold))
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            bulletPoint("1", "Enter your destination city")
-                            bulletPoint("2", "We calculate the timezone shift and create a 3-night plan")
-                            bulletPoint("3", "Each night shifts your sleep closer to destination time")
-                            bulletPoint("4", "Set alarms for each night and arrive refreshed")
-                        }
-                    }
-                    .moonbeamCard()
-
-                    // Show current plan if exists
                     if let plan = plan {
                         NavigationLink {
-                            JetLagPlanView(plan: plan) { day in
-                                Task {
-                                    await AlarmService.shared.scheduleJetLagAlarms(
-                                        day: day,
-                                        nightLabel: "Night \(day.dayIndex + 1)"
-                                    )
-                                }
-                            }
+                            JetLagPlanView(plan: plan)
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -115,16 +68,88 @@ struct JetLagView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $showingPlan) {
             if let plan = plan {
-                JetLagPlanView(plan: plan) { day in
-                    Task {
-                        await AlarmService.shared.scheduleJetLagAlarms(
-                            day: day,
-                            nightLabel: "Night \(day.dayIndex + 1)"
-                        )
-                    }
-                }
+                JetLagPlanView(plan: plan)
             }
         }
+    }
+
+    // MARK: - Trip Entry
+
+    private var tripEntrySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Plan your trip", systemImage: "airplane.departure")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("LEAVING FROM")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                TextField(deviceTimeZoneLabel, text: $originQuery)
+                    .textInputAutocapitalization(.words)
+                    .jetLagFieldStyle()
+
+                Text("Defaults to your device's timezone. Enter a city, airport code, or timezone to override.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("FLYING TO")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                TextField("City or airport code (e.g. Tokyo, LHR)", text: $destinationCity)
+                    .textInputAutocapitalization(.words)
+                    .jetLagFieldStyle()
+            }
+
+            if let error = errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Button {
+                Task { await generatePlan() }
+            } label: {
+                HStack {
+                    if isLoading {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Label("Generate Plan", systemImage: "sparkles")
+                    }
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.glass)
+            .disabled(destinationCity.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
+
+            Text("Plans are built around your usual sleep — \(SleepCalculator.formattedTime(minutesSinceMidnight: profile.idealBedMinutes)) to \(SleepCalculator.formattedTime(minutesSinceMidnight: profile.idealWakeMinutes)). Adjust it in Settings.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .moonbeamCard()
+    }
+
+    // MARK: - How It Works
+
+    private var howItWorksSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("How it works", systemImage: "info.circle")
+                .font(.subheadline.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 8) {
+                bulletPoint("1", "Enter your destination")
+                bulletPoint("2", "We calculate the timezone shift and plan your transition nights")
+                bulletPoint("3", "Pick how many nights you have — each one nudges your sleep toward destination time")
+                bulletPoint("4", "Set alarms for the whole plan and arrive refreshed")
+            }
+        }
+        .moonbeamCard()
     }
 
     private func bulletPoint(_ num: String, _ text: String) -> some View {
@@ -149,24 +174,51 @@ struct JetLagView: View {
         errorMessage = nil
 
         do {
-            // Resolve city to timezone and coordinates
-            let resolved = try await JetLagPlanCalculator.resolveCity(city)
+            // Origin: device timezone unless the user typed an override.
+            let originName: String
+            let originOffset: Int
+            let originSun: (sunrise: Int, sunset: Int)
 
-            // Fetch destination sun times
-            let destSun = await JetLagPlanCalculator.fetchSunTimes(lat: resolved.lat, lng: resolved.lng)
+            let originInput = originQuery.trimmingCharacters(in: .whitespaces)
+            if originInput.isEmpty {
+                let tz = TimeZone.current
+                originName = tz.localizedName(for: .generic, locale: .current)
+                    ?? tz.identifier.split(separator: "/").last.map {
+                        $0.replacingOccurrences(of: "_", with: " ")
+                    } ?? tz.identifier
+                originOffset = tz.secondsFromGMT() / 3600
+                // GPS-based sun times from the home dial; same clock as the device.
+                originSun = (sunTimes.sunriseMinutes, sunTimes.sunsetMinutes)
+            } else {
+                let resolved = try await JetLagPlanCalculator.resolvePlace(originInput)
+                originName = resolved.name
+                originOffset = resolved.offsetHours
+                originSun = await JetLagPlanCalculator.fetchSunTimes(
+                    lat: resolved.latitude,
+                    lng: resolved.longitude,
+                    timeZone: resolved.timeZone
+                )
+            }
 
-            // Get local timezone offset
-            let localOffset = TimeZone.current.secondsFromGMT() / 3600
+            let destination = try await JetLagPlanCalculator.resolvePlace(city)
+            let destSun = await JetLagPlanCalculator.fetchSunTimes(
+                lat: destination.latitude,
+                lng: destination.longitude,
+                timeZone: destination.timeZone
+            )
 
-            // Generate plan
             let newPlan = JetLagPlanCalculator.generatePlan(
-                destinationCity: resolved.name,
-                localSunrise: sunTimes.sunriseMinutes,
-                localSunset: sunTimes.sunsetMinutes,
+                originName: originName,
+                destinationCity: destination.name,
+                nightCount: 3,
+                originSunrise: originSun.sunrise,
+                originSunset: originSun.sunset,
                 destSunrise: destSun.sunrise,
                 destSunset: destSun.sunset,
-                localOffsetHours: localOffset,
-                destOffsetHours: resolved.offsetHours
+                localOffsetHours: originOffset,
+                destOffsetHours: destination.offsetHours,
+                idealBedMinutes: profile.idealBedMinutes,
+                idealWakeMinutes: profile.idealWakeMinutes
             )
 
             plan = newPlan
@@ -179,9 +231,27 @@ struct JetLagView: View {
     }
 }
 
+private extension View {
+    func jetLagFieldStyle() -> some View {
+        self
+            .font(.body)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    )
+            )
+    }
+}
+
 #Preview("Jet Lag") {
     NavigationStack {
         JetLagView()
     }
     .environmentObject(SunTimesService())
+    .environmentObject(SleepProfile())
 }

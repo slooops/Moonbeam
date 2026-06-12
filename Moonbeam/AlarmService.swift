@@ -3,131 +3,203 @@
 //  Moonbeam
 //
 
-import UserNotifications
+import AlarmKit
 import SwiftUI
+import UserNotifications
+
+/// AlarmKit requires a metadata type; Moonbeam's alarms carry no extra state.
+struct MoonbeamAlarmMetadata: AlarmMetadata {
+    init() {}
+}
 
 @MainActor
 final class AlarmService: ObservableObject {
     @Published var isAuthorized: Bool = false
-    @AppStorage("alarmSoundName") var alarmSoundName: String = "default"
 
     static let shared = AlarmService()
 
+    private static let alarmIDsKey = "moonbeam.alarmkit.ids"
+    private static let snoozeMinutes: TimeInterval = 9 * 60
+
     private init() {
-        Task { await checkAuthorization() }
+        checkAuthorization()
+    }
+
+    enum AlarmSchedulingError: LocalizedError {
+        case notAuthorized
+        case nothingToSchedule
+
+        var errorDescription: String? {
+            switch self {
+            case .notAuthorized:
+                return "Alarm access is off. Enable it in Settings → Moonbeam."
+            case .nothingToSchedule:
+                return "All of this plan's nights are in the past. Pick a later flight date."
+            }
+        }
     }
 
     // MARK: - Authorization
 
     func requestAuthorization() async {
         do {
-            let granted = try await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
-            isAuthorized = granted
+            let state = try await AlarmManager.shared.requestAuthorization()
+            isAuthorized = state == .authorized
         } catch {
             isAuthorized = false
         }
+
+        // Bedtime reminders still arrive as regular notifications.
+        _ = try? await UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound, .badge])
     }
 
-    func checkAuthorization() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        isAuthorized = settings.authorizationStatus == .authorized
+    func checkAuthorization() {
+        isAuthorized = AlarmManager.shared.authorizationState == .authorized
     }
 
-    // MARK: - Schedule Sleep Alarm
-
-    func scheduleSleepAlarm(bedMinutes: Int, wakeMinutes: Int, label: String = "Moonbeam") async {
+    private func ensureAuthorized() async -> Bool {
+        checkAuthorization()
         if !isAuthorized {
             await requestAuthorization()
         }
-        guard isAuthorized else { return }
+        return isAuthorized
+    }
 
-        let center = UNUserNotificationCenter.current()
+    // MARK: - Single Sleep Alarm (home screen)
 
-        // Remove previous Moonbeam alarms
-        center.removePendingNotificationRequests(withIdentifiers: [
-            "moonbeam.bedtime", "moonbeam.wakeup"
-        ])
+    func scheduleSleepAlarm(bedMinutes: Int, wakeMinutes: Int, label: String = "Moonbeam") async {
+        guard await ensureAuthorized() else { return }
 
-        // Bedtime notification
-        let bedContent = UNMutableNotificationContent()
-        bedContent.title = "Time for Bed"
-        bedContent.body = "Your \(label) bedtime is now. Sweet dreams!"
-        bedContent.sound = .default
-        bedContent.categoryIdentifier = "MOONBEAM_ALARM"
+        cancelMoonbeamAlarms()
 
         let bedDate = nextOccurrence(minutesSinceMidnight: bedMinutes)
-        let bedTrigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: bedDate),
-            repeats: false
-        )
-        let bedRequest = UNNotificationRequest(identifier: "moonbeam.bedtime", content: bedContent, trigger: bedTrigger)
-
-        // Wake-up notification
-        let wakeContent = UNMutableNotificationContent()
-        wakeContent.title = "Wake Up!"
-        wakeContent.body = "Rise and shine — your \(label) alarm is going off."
-        wakeContent.sound = alarmSound
-        wakeContent.categoryIdentifier = "MOONBEAM_ALARM"
-
         let wakeDate = nextOccurrence(minutesSinceMidnight: wakeMinutes, after: bedDate)
-        let wakeTrigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: wakeDate),
-            repeats: false
-        )
-        let wakeRequest = UNNotificationRequest(identifier: "moonbeam.wakeup", content: wakeContent, trigger: wakeTrigger)
 
-        try? await center.add(bedRequest)
-        try? await center.add(wakeRequest)
+        await scheduleBedtimeReminder(at: bedDate, body: "Your \(label) bedtime is now. Sweet dreams!", id: "moonbeam.bedtime")
+        try? await scheduleWakeAlarm(at: wakeDate, title: "Wake Up — \(label)")
     }
 
-    // MARK: - Schedule Jet Lag Alarms
+    // MARK: - Jet Lag Plan Alarms
 
-    func scheduleJetLagAlarms(day: JetLagDayPlan, nightLabel: String) async {
-        await scheduleSleepAlarm(
-            bedMinutes: day.sleepWindow.bedMinutes,
-            wakeMinutes: day.sleepWindow.wakeMinutes,
-            label: "Jet Lag \(nightLabel)"
-        )
-
-        // Schedule a follow-up notification for the next morning
-        if day.dayIndex < 2 {
-            await scheduleFollowUpReminder(afterWakeMinutes: day.sleepWindow.wakeMinutes, nextNight: day.dayIndex + 2)
+    /// Schedules a wake-up alarm (AlarmKit, sounds through Silent mode) and a
+    /// bedtime reminder notification for every future night in the plan.
+    func scheduleJetLagPlanAlarms(plan: JetLagPlan) async -> Result<Void, Error> {
+        guard await ensureAuthorized() else {
+            return .failure(AlarmSchedulingError.notAuthorized)
         }
+
+        cancelMoonbeamAlarms()
+
+        let now = Date()
+        var scheduledAny = false
+
+        for night in plan.nights {
+            guard night.wakeDate > now else { continue }
+
+            do {
+                try await scheduleWakeAlarm(
+                    at: night.wakeDate,
+                    title: "Night \(night.nightIndex + 1) Wake-Up · \(plan.destinationCity)"
+                )
+            } catch {
+                return .failure(error)
+            }
+
+            if night.bedDate > now {
+                await scheduleBedtimeReminder(
+                    at: night.bedDate,
+                    body: "Night \(night.nightIndex + 1) of your \(plan.destinationCity) transition. Bedtime is now.",
+                    id: "moonbeam.jetlag.bedtime.\(night.nightIndex)"
+                )
+            }
+
+            scheduledAny = true
+        }
+
+        guard scheduledAny else {
+            return .failure(AlarmSchedulingError.nothingToSchedule)
+        }
+        return .success(())
     }
 
-    private func scheduleFollowUpReminder(afterWakeMinutes: Int, nextNight: Int) async {
-        let center = UNUserNotificationCenter.current()
+    // MARK: - AlarmKit Wake Alarm
 
+    private func scheduleWakeAlarm(at date: Date, title: String) async throws {
+        let stopButton = AlarmButton(
+            text: "Stop",
+            textColor: .white,
+            systemImageName: "checkmark.circle.fill"
+        )
+        let snoozeButton = AlarmButton(
+            text: "Snooze",
+            textColor: .white,
+            systemImageName: "zzz"
+        )
+
+        let alert = AlarmPresentation.Alert(
+            title: LocalizedStringResource(stringLiteral: title),
+            stopButton: stopButton,
+            secondaryButton: snoozeButton,
+            secondaryButtonBehavior: .countdown
+        )
+
+        let attributes = AlarmAttributes<MoonbeamAlarmMetadata>(
+            presentation: AlarmPresentation(alert: alert),
+            metadata: MoonbeamAlarmMetadata(),
+            tintColor: .indigo
+        )
+
+        let configuration = AlarmManager.AlarmConfiguration(
+            countdownDuration: Alarm.CountdownDuration(preAlert: nil, postAlert: Self.snoozeMinutes),
+            schedule: .fixed(date),
+            attributes: attributes
+        )
+
+        let id = UUID()
+        _ = try await AlarmManager.shared.schedule(id: id, configuration: configuration)
+        rememberAlarmID(id)
+    }
+
+    // MARK: - Bedtime Reminder (notification)
+
+    private func scheduleBedtimeReminder(at date: Date, body: String, id: String) async {
         let content = UNMutableNotificationContent()
-        content.title = "Set Tonight's Jet Lag Alarms"
-        content.body = "Open Moonbeam to set your Night \(nextNight) transition alarms."
+        content.title = "Time for Bed"
+        content.body = body
         content.sound = .default
         content.categoryIdentifier = "MOONBEAM_REMINDER"
 
-        let reminderMinutes = (afterWakeMinutes + 120) % 1440
-        let reminderDate = nextOccurrence(minutesSinceMidnight: reminderMinutes)
         let trigger = UNCalendarNotificationTrigger(
-            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDate),
+            dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date),
             repeats: false
         )
-        let request = UNNotificationRequest(identifier: "moonbeam.jetlag.reminder.\(nextNight)", content: content, trigger: trigger)
-        try? await center.add(request)
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+        try? await UNUserNotificationCenter.current().add(request)
     }
 
-    // MARK: - Cancel All
+    // MARK: - Cancel
+
+    func cancelMoonbeamAlarms() {
+        for idString in UserDefaults.standard.stringArray(forKey: Self.alarmIDsKey) ?? [] {
+            if let id = UUID(uuidString: idString) {
+                try? AlarmManager.shared.cancel(id: id)
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: Self.alarmIDsKey)
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+    }
 
     func cancelAll() {
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        cancelMoonbeamAlarms()
     }
 
     // MARK: - Helpers
 
-    private var alarmSound: UNNotificationSound {
-        if alarmSoundName == "default" {
-            return .default
-        }
-        return UNNotificationSound(named: UNNotificationSoundName(alarmSoundName))
+    private func rememberAlarmID(_ id: UUID) {
+        var ids = UserDefaults.standard.stringArray(forKey: Self.alarmIDsKey) ?? []
+        ids.append(id.uuidString)
+        UserDefaults.standard.set(ids, forKey: Self.alarmIDsKey)
     }
 
     private func nextOccurrence(minutesSinceMidnight mins: Int, after: Date? = nil) -> Date {
@@ -142,17 +214,4 @@ final class AlarmService: ObservableObject {
         }
         return date
     }
-
-    // MARK: - Available Sounds
-
-    static let availableSounds: [(name: String, label: String)] = [
-        ("default", "Default"),
-        ("Alarm", "Classic Alarm"),
-        ("Beacon", "Beacon"),
-        ("Bulletin", "Bulletin"),
-        ("Bamboo", "Bamboo"),
-        ("Chime", "Chime"),
-        ("Circuit", "Circuit"),
-        ("Cosmic", "Cosmic"),
-    ]
 }
