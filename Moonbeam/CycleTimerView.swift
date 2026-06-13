@@ -8,7 +8,9 @@ import SwiftUI
 struct CycleTimerView: View {
     @EnvironmentObject private var profile: SleepProfile
     @State private var showingProfile = false
-    @State private var slider = SleepSliderView()
+    @State private var bedMinutes = 22 * 60 + 30
+    @State private var wakeMinutes = 7 * 60
+    @State private var sleepNowTrigger = 0
     @State private var alarmSet = false
 
     var body: some View {
@@ -18,13 +20,17 @@ struct CycleTimerView: View {
             ScrollView {
                 VStack(spacing: 28) {
                     VStack(spacing: 16) {
-                        slider
+                        SleepSliderView(
+                            publishedBedMinutes: $bedMinutes,
+                            publishedWakeMinutes: $wakeMinutes,
+                            sleepNowTrigger: $sleepNowTrigger
+                        )
                     }
                     .moonbeamCard()
 
                     HStack(spacing: 14) {
                         Button {
-                            slider.sleepNow()
+                            sleepNowTrigger += 1
                         } label: {
                             Label("Sleep Now", systemImage: "moon.zzz.fill")
                                 .font(.headline)
@@ -36,8 +42,8 @@ struct CycleTimerView: View {
                         Button {
                             Task {
                                 await AlarmService.shared.scheduleSleepAlarm(
-                                    bedMinutes: slider.currentBedMinutes,
-                                    wakeMinutes: slider.currentWakeMinutes,
+                                    bedMinutes: bedMinutes,
+                                    wakeMinutes: wakeMinutes,
                                     label: "Sleep Cycle"
                                 )
                                 withAnimation { alarmSet = true }

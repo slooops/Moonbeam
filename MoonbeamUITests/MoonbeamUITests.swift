@@ -42,6 +42,31 @@ final class MoonbeamUITests: XCTestCase {
     }
 
     @MainActor
+    func testHomeScreenSetAlarm() throws {
+        addUIInterruptionMonitor(withDescription: "Permission prompts") { alert in
+            for label in ["Allow", "Allow While Using App", "Allow Once", "OK"] {
+                if alert.buttons[label].exists {
+                    alert.buttons[label].tap()
+                    return true
+                }
+            }
+            return false
+        }
+
+        let app = XCUIApplication()
+        app.launch()
+
+        let setAlarm = app.buttons["Set Alarm"]
+        XCTAssertTrue(setAlarm.waitForExistence(timeout: 5))
+        setAlarm.tap()
+        app.tap()  // nudge so the interruption monitor fires if a prompt is up
+
+        // The button flips to "Alarm Set" for 3 seconds on success.
+        XCTAssertTrue(app.staticTexts["Alarm Set"].waitForExistence(timeout: 8))
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()

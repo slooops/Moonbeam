@@ -6,8 +6,27 @@
 import SwiftUI
 
 struct SleepSliderView: View {
-    @EnvironmentObject private var profile: SleepProfile
+    /// Live displayed bed/wake times, published up to the parent so buttons
+    /// outside this view (Set Alarm) always see what the dial shows.
+    @Binding var publishedBedMinutes: Int
+    @Binding var publishedWakeMinutes: Int
+    /// Increment to snap the bedtime handle to the current time.
+    @Binding var sleepNowTrigger: Int
+
+    // Plain instance, not @EnvironmentObject — SleepProfile is
+    // @AppStorage-backed, so every instance sees the same UserDefaults values.
+    private let profile = SleepProfile()
     @EnvironmentObject private var sunTimes: SunTimesService
+
+    init(
+        publishedBedMinutes: Binding<Int>,
+        publishedWakeMinutes: Binding<Int>,
+        sleepNowTrigger: Binding<Int>
+    ) {
+        _publishedBedMinutes = publishedBedMinutes
+        _publishedWakeMinutes = publishedWakeMinutes
+        _sleepNowTrigger = sleepNowTrigger
+    }
 
     // Angles in radians on 24-hr dial (0 = 12 AM at top, clockwise)
     @State private var bedAngle: Double = SleepCalculator.angle(
@@ -74,16 +93,21 @@ struct SleepSliderView: View {
         SleepCalculator.minutesSinceMidnight(from: displayWakeAngle)
     }
 
-    // Public accessors for alarm scheduling
-    var currentBedMinutes: Int { displayBedMinutes }
-    var currentWakeMinutes: Int { displayWakeMinutes }
-
     var body: some View {
         VStack(spacing: 20) {
             timeLabels
             dialView
             durationLabel
         }
+        .onAppear { publishTimes() }
+        .onChange(of: displayBedMinutes) { publishTimes() }
+        .onChange(of: displayWakeMinutes) { publishTimes() }
+        .onChange(of: sleepNowTrigger) { sleepNow() }
+    }
+
+    private func publishTimes() {
+        publishedBedMinutes = displayBedMinutes
+        publishedWakeMinutes = displayWakeMinutes
     }
 
     // MARK: - Time Labels
@@ -628,7 +652,7 @@ struct SleepSliderView: View {
 
     // MARK: - Sleep Now
 
-    func sleepNow() {
+    private func sleepNow() {
         let now = Date()
         let cal = Calendar.current
         let hour = cal.component(.hour, from: now)
@@ -644,12 +668,19 @@ struct SleepSliderView: View {
 }
 
 #Preview {
+    @Previewable @State var bed = 22 * 60 + 30
+    @Previewable @State var wake = 7 * 60
+    @Previewable @State var trigger = 0
+
     ZStack {
         Color.clear.moonbeamBackground()
-        SleepSliderView()
-            .environmentObject(SleepProfile())
-            .environmentObject(SunTimesService())
-            .foregroundColor(.white)
-            .padding()
+        SleepSliderView(
+            publishedBedMinutes: $bed,
+            publishedWakeMinutes: $wake,
+            sleepNowTrigger: $trigger
+        )
+        .environmentObject(SunTimesService())
+        .foregroundColor(.white)
+        .padding()
     }
 }

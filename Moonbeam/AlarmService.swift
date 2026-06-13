@@ -12,17 +12,31 @@ struct MoonbeamAlarmMetadata: AlarmMetadata {
     init() {}
 }
 
+/// A wake alarm Moonbeam has scheduled, with the context AlarmKit itself
+/// doesn't store (title, fire time, paired bedtime reminder).
+struct ScheduledAlarm: Identifiable, Codable, Equatable {
+    let id: UUID
+    let title: String
+    let fireDate: Date
+    /// Identifier of the bedtime reminder notification paired with this alarm.
+    let reminderID: String?
+}
+
 @MainActor
 final class AlarmService: ObservableObject {
     @Published var isAuthorized: Bool = false
+    @Published private(set) var scheduledAlarms: [ScheduledAlarm] = []
 
     static let shared = AlarmService()
 
-    private static let alarmIDsKey = "moonbeam.alarmkit.ids"
+    private static let alarmRecordsKey = "moonbeam.alarmkit.records"
+    private static let legacyAlarmIDsKey = "moonbeam.alarmkit.ids"
     private static let snoozeMinutes: TimeInterval = 9 * 60
 
     private init() {
         checkAuthorization()
+        loadRecords()
+        refreshScheduledAlarms()
     }
 
     enum AlarmSchedulingError: LocalizedError {
@@ -77,7 +91,7 @@ final class AlarmService: ObservableObject {
         let wakeDate = nextOccurrence(minutesSinceMidnight: wakeMinutes, after: bedDate)
 
         await scheduleBedtimeReminder(at: bedDate, body: "Your \(label) bedtime is now. Sweet dreams!", id: "moonbeam.bedtime")
-        try? await scheduleWakeAlarm(at: wakeDate, title: "Wake Up — \(label)")
+        try? await scheduleWakeAlarm(at: wakeDate, title: "Wake Up — \(label)", reminderID: "moonbeam.bedtime")
     }
 
     // MARK: - Jet Lag Plan Alarms
@@ -97,10 +111,13 @@ final class AlarmService: ObservableObject {
         for night in plan.nights {
             guard night.wakeDate > now else { continue }
 
+            let reminderID = "moonbeam.jetlag.bedtime.\(night.nightIndex)"
+
             do {
                 try await scheduleWakeAlarm(
                     at: night.wakeDate,
-                    title: "Night \(night.nightIndex + 1) Wake-Up · \(plan.destinationCity)"
+                    title: "Night \(night.nightIndex + 1) Wake-Up · \(plan.destinationCity)",
+                    reminderID: reminderID
                 )
             } catch {
                 return .failure(error)
@@ -110,7 +127,7 @@ final class AlarmService: ObservableObject {
                 await scheduleBedtimeReminder(
                     at: night.bedDate,
                     body: "Night \(night.nightIndex + 1) of your \(plan.destinationCity) transition. Bedtime is now.",
-                    id: "moonbeam.jetlag.bedtime.\(night.nightIndex)"
+                    id: reminderID
                 )
             }
 
@@ -125,7 +142,7 @@ final class AlarmService: ObservableObject {
 
     // MARK: - AlarmKit Wake Alarm
 
-    private func scheduleWakeAlarm(at date: Date, title: String) async throws {
+    private func scheduleWakeAlarm(at date: Date, title: String, reminderID: String? = nil) async throws {
         let stopButton = AlarmButton(
             text: "Stop",
             textColor: .white,
@@ -158,7 +175,7 @@ final class AlarmService: ObservableObject {
 
         let id = UUID()
         _ = try await AlarmManager.shared.schedule(id: id, configuration: configuration)
-        rememberAlarmID(id)
+        record(ScheduledAlarm(id: id, title: title, fireDate: date, reminderID: reminderID))
     }
 
     // MARK: - Bedtime Reminder (notification)
@@ -180,13 +197,31 @@ final class AlarmService: ObservableObject {
 
     // MARK: - Cancel
 
+    /// Turns off a single wake alarm and its paired bedtime reminder.
+    func cancelAlarm(id: UUID) {
+        try? AlarmManager.shared.cancel(id: id)
+        if let reminderID = scheduledAlarms.first(where: { $0.id == id })?.reminderID {
+            UNUserNotificationCenter.current()
+                .removePendingNotificationRequests(withIdentifiers: [reminderID])
+        }
+        scheduledAlarms.removeAll { $0.id == id }
+        saveRecords()
+    }
+
     func cancelMoonbeamAlarms() {
-        for idString in UserDefaults.standard.stringArray(forKey: Self.alarmIDsKey) ?? [] {
+        // Cancel everything AlarmKit has for this app, not just our records,
+        // so alarms orphaned by older builds get cleaned up too.
+        for alarm in (try? AlarmManager.shared.alarms) ?? [] {
+            try? AlarmManager.shared.cancel(id: alarm.id)
+        }
+        for idString in UserDefaults.standard.stringArray(forKey: Self.legacyAlarmIDsKey) ?? [] {
             if let id = UUID(uuidString: idString) {
                 try? AlarmManager.shared.cancel(id: id)
             }
         }
-        UserDefaults.standard.removeObject(forKey: Self.alarmIDsKey)
+        UserDefaults.standard.removeObject(forKey: Self.legacyAlarmIDsKey)
+        scheduledAlarms = []
+        saveRecords()
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
     }
 
@@ -194,12 +229,38 @@ final class AlarmService: ObservableObject {
         cancelMoonbeamAlarms()
     }
 
-    // MARK: - Helpers
+    // MARK: - Alarm Records
 
-    private func rememberAlarmID(_ id: UUID) {
-        var ids = UserDefaults.standard.stringArray(forKey: Self.alarmIDsKey) ?? []
-        ids.append(id.uuidString)
-        UserDefaults.standard.set(ids, forKey: Self.alarmIDsKey)
+    /// Re-syncs our records against what AlarmKit actually has scheduled, so
+    /// alarms that already fired (or were stopped from the lock screen) drop
+    /// out of the list.
+    func refreshScheduledAlarms() {
+        guard let active = try? AlarmManager.shared.alarms else { return }
+        let activeIDs = Set(active.map(\.id))
+        let pruned = scheduledAlarms.filter { activeIDs.contains($0.id) }
+        if pruned != scheduledAlarms {
+            scheduledAlarms = pruned
+            saveRecords()
+        }
+    }
+
+    private func record(_ alarm: ScheduledAlarm) {
+        scheduledAlarms.removeAll { $0.id == alarm.id }
+        scheduledAlarms.append(alarm)
+        scheduledAlarms.sort { $0.fireDate < $1.fireDate }
+        saveRecords()
+    }
+
+    private func loadRecords() {
+        guard let data = UserDefaults.standard.data(forKey: Self.alarmRecordsKey),
+              let decoded = try? JSONDecoder().decode([ScheduledAlarm].self, from: data)
+        else { return }
+        scheduledAlarms = decoded.sorted { $0.fireDate < $1.fireDate }
+    }
+
+    private func saveRecords() {
+        guard let data = try? JSONEncoder().encode(scheduledAlarms) else { return }
+        UserDefaults.standard.set(data, forKey: Self.alarmRecordsKey)
     }
 
     private func nextOccurrence(minutesSinceMidnight mins: Int, after: Date? = nil) -> Date {

@@ -81,7 +81,7 @@ struct SettingsView: View {
                 .font(.headline)
 
             if alarmService.isAuthorized {
-                Label("Alarms enabled", systemImage: "checkmark.circle.fill")
+                Label("Alarm access granted", systemImage: "checkmark.circle.fill")
                     .font(.subheadline)
                     .foregroundStyle(.green)
             } else {
@@ -93,11 +93,64 @@ struct SettingsView: View {
                 }
             }
 
+            if !alarmService.scheduledAlarms.isEmpty {
+                Divider().opacity(0.3)
+
+                Text("UPCOMING ALARMS")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                ForEach(alarmService.scheduledAlarms) { alarm in
+                    alarmRow(alarm)
+                }
+
+                Button(role: .destructive) {
+                    withAnimation { alarmService.cancelMoonbeamAlarms() }
+                } label: {
+                    Label("Cancel All Alarms", systemImage: "bell.slash.fill")
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.glass)
+            }
+
             Text("Wake-up alarms are real system alarms — they sound even in Silent mode, with full-screen snooze and stop. Bedtime reminders arrive as notifications.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .moonbeamCard()
+        .onAppear { alarmService.refreshScheduledAlarms() }
+    }
+
+    private func alarmRow(_ alarm: ScheduledAlarm) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "alarm.fill")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.5))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(alarm.title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Text(alarm.fireDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                withAnimation { alarmService.cancelAlarm(id: alarm.id) }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete \(alarm.title)")
+        }
+        .padding(.vertical, 2)
     }
 
     /// Bridges minutes-since-midnight storage to a DatePicker's Date binding.

@@ -306,9 +306,20 @@ struct JetLagPlanView: View {
                     .font(.headline)
                     .foregroundStyle(.green)
 
-                Text("Wake-up alarms sound even in Silent mode. Bedtime reminders arrive as notifications.")
+                Text("Wake-up alarms sound even in Silent mode. Bedtime reminders arrive as notifications. Manage or delete individual alarms in Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Button(role: .destructive) {
+                    AlarmService.shared.cancelMoonbeamAlarms()
+                    withAnimation { alarmsSet = false }
+                } label: {
+                    Label("Turn Off Alarms", systemImage: "bell.slash.fill")
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.glass)
             } else {
                 Button {
                     Task {
