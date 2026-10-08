@@ -6,6 +6,31 @@
 import CoreLocation
 import SwiftUI
 
+/// sunrise-sunset.org lookups. Coordinates are rounded to two decimal places
+/// (about 1 km) before they leave the device; sun times barely change at that
+/// scale, and the service never sees a precise location.
+enum SunAPI {
+    static let attributionURL = URL(string: "https://sunrise-sunset.org")!
+
+    static func url(lat: Double, lng: Double) -> URL? {
+        let lat = String(format: "%.2f", lat)
+        let lng = String(format: "%.2f", lng)
+        return URL(string: "https://api.sunrise-sunset.org/json?lat=\(lat)&lng=\(lng)&formatted=0")
+    }
+}
+
+/// The visible link sunrise-sunset.org requires wherever its data is shown.
+struct SunAttribution: View {
+    var body: some View {
+        Link(destination: SunAPI.attributionURL) {
+            Text("Sun times by sunrise-sunset.org")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .underline()
+        }
+    }
+}
+
 @MainActor
 final class SunTimesService: NSObject, ObservableObject {
     @Published var sunriseMinutes: Int = 390   // 6:30 AM default
@@ -25,7 +50,7 @@ final class SunTimesService: NSObject, ObservableObject {
     }
 
     private func fetchSunTimes(lat: Double, lng: Double) async {
-        guard let url = URL(string: "https://api.sunrise-sunset.org/json?lat=\(lat)&lng=\(lng)&formatted=0") else { return }
+        guard let url = SunAPI.url(lat: lat, lng: lng) else { return }
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
@@ -63,6 +88,17 @@ extension SunTimesService: CLLocationManagerDelegate {
         let lng = location.coordinate.longitude
         Task { @MainActor [weak self] in
             await self?.fetchSunTimes(lat: lat, lng: lng)
+        }
+    }
+
+    /// The first `requestLocation()` fails while the permission prompt is
+    /// still up, so ask again once the user grants access.
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        default:
+            break
         }
     }
 

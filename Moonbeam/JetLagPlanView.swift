@@ -53,6 +53,8 @@ struct JetLagPlanView: View {
                     )
 
                     timezoneAndAlarmSection
+
+                    SunAttribution()
                 }
                 .padding()
             }

@@ -25,6 +25,8 @@ struct CycleTimerView: View {
                             publishedWakeMinutes: $wakeMinutes,
                             sleepNowTrigger: $sleepNowTrigger
                         )
+
+                        SunAttribution()
                     }
                     .moonbeamCard()
 

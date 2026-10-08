@@ -3,8 +3,8 @@
 //  Moonbeam
 //
 
-import CoreLocation
 import Foundation
+import MapKit
 
 struct JetLagSleepWindow: Identifiable, Codable {
     let id: UUID
@@ -221,26 +221,27 @@ enum JetLagPlanCalculator {
         }
 
         // 3. Free-text city name
-        let geocoder = CLGeocoder()
-        let placemarks = try await geocoder.geocodeAddressString(trimmed)
-        guard let place = placemarks.first,
-              let tz = place.timeZone,
-              let loc = place.location else {
+        guard let item = try await firstMapItem(for: trimmed),
+              let tz = item.timeZone else {
             throw CityResolveError.notFound
         }
-        let displayName = place.locality ?? place.name ?? trimmed
+        let displayName = item.addressRepresentations?.cityName ?? item.name ?? trimmed
         return ResolvedPlace(
             name: displayName,
             timeZone: tz,
-            latitude: loc.coordinate.latitude,
-            longitude: loc.coordinate.longitude
+            latitude: item.location.coordinate.latitude,
+            longitude: item.location.coordinate.longitude
         )
     }
 
     private static func geocode(_ query: String) async throws -> (lat: Double, lng: Double) {
-        let placemarks = try await CLGeocoder().geocodeAddressString(query)
-        guard let loc = placemarks.first?.location else { throw CityResolveError.notFound }
-        return (loc.coordinate.latitude, loc.coordinate.longitude)
+        guard let item = try await firstMapItem(for: query) else { throw CityResolveError.notFound }
+        return (item.location.coordinate.latitude, item.location.coordinate.longitude)
+    }
+
+    private static func firstMapItem(for query: String) async throws -> MKMapItem? {
+        guard let request = MKGeocodingRequest(addressString: query) else { return nil }
+        return try await request.mapItems.first
     }
 
     // MARK: - Sun Times
@@ -250,7 +251,7 @@ enum JetLagPlanCalculator {
     static func fetchSunTimes(lat: Double?, lng: Double?, timeZone: TimeZone) async -> (sunrise: Int, sunset: Int) {
         let fallback = (390, 1200)
         guard let lat, let lng,
-              let url = URL(string: "https://api.sunrise-sunset.org/json?lat=\(lat)&lng=\(lng)&formatted=0") else {
+              let url = SunAPI.url(lat: lat, lng: lng) else {
             return fallback
         }
 
