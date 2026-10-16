@@ -18,7 +18,7 @@ struct SettingsView: View {
                     sleepProfileSection
                     alarmSection
                     homeKitSection
-                    sonosSection
+                    aboutSection
                 }
                 .padding()
             }
@@ -70,6 +70,7 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .moonbeamCard()
     }
 
@@ -119,6 +120,7 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .moonbeamCard()
         .onAppear { alarmService.refreshScheduledAlarms() }
     }
@@ -193,31 +195,36 @@ struct SettingsView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .moonbeamCard()
     }
 
-    // MARK: - Sonos
+    // MARK: - About
 
-    private var sonosSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Sonos Integration", systemImage: "hifispeaker.2.fill")
+    private var aboutSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("About", systemImage: "moon.stars.fill")
                 .font(.headline)
 
-            HStack(spacing: 10) {
-                Image(systemName: "sparkles")
-                    .font(.title2)
-                    .foregroundStyle(.white.opacity(0.3))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Coming Soon")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.6))
-                    Text("Wake up to your favorite music on your Sonos speakers.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+            Link(destination: URL(string: "https://slooops.com/moonbeam/support")!) {
+                Label("Support", systemImage: "questionmark.circle")
+                    .font(.subheadline)
             }
+
+            Link(destination: URL(string: "https://slooops.com/moonbeam/privacy")!) {
+                Label("Privacy Policy", systemImage: "hand.raised")
+                    .font(.subheadline)
+            }
+
+            Divider().opacity(0.3)
+
+            SunAttribution()
+
+            Text("Moonbeam \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .moonbeamCard()
     }
 }

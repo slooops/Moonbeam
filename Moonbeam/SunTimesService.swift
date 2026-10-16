@@ -19,7 +19,7 @@ enum SunAPI {
     }
 }
 
-/// The visible link sunrise-sunset.org requires wherever its data is shown.
+/// The visible credit sunrise-sunset.org requires; its terms allow it on an About screen.
 struct SunAttribution: View {
     var body: some View {
         Link(destination: SunAPI.attributionURL) {
