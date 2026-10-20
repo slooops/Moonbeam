@@ -172,15 +172,16 @@ struct SleepSliderView: View {
             let midRadius = outerRadius - ringWidth / 2
 
             ZStack {
-                // Fixed background sky gradient ring
-                backgroundSkyRing(center: center, radius: midRadius)
-
-                // Recessed groove shadow
+                // Recessed groove shadow, drawn beneath the ring so only its
+                // edges show and the sky colors stay at full strength.
                 Circle()
-                    .stroke(Color.black.opacity(0.3), lineWidth: ringWidth + 4)
-                    .blur(radius: 4)
+                    .stroke(Color.black.opacity(0.35), lineWidth: ringWidth + 8)
+                    .blur(radius: 5)
                     .frame(width: midRadius * 2, height: midRadius * 2)
                     .position(center)
+
+                // Fixed background sky gradient ring
+                backgroundSkyRing(center: center, radius: midRadius)
 
                 // Inner edge highlight (top-lit bevel)
                 Circle()
@@ -252,28 +253,29 @@ struct SleepSliderView: View {
         let sunrise = max(0.15, min(0.40, Double(sunTimes.sunriseMinutes) / 1440.0))
         let sunset = max(0.60, min(0.92, Double(sunTimes.sunsetMinutes) / 1440.0))
 
-        let postSunrise = sunrise + 0.06
         let midMorning = min((sunrise + 0.5) / 2 + 0.04, 0.48)
-        let midAfternoon = max((0.5 + sunset) / 2 - 0.02, 0.52)
-        let preSunset = sunset - 0.015
+        let midAfternoon = min(max((0.5 + sunset) / 2 - 0.02, 0.52), sunset - 0.08)
 
+        // Wide, overlapping stops either side of sunrise and sunset so the
+        // night/day transitions blend instead of snapping.
         let gradient = AngularGradient(
             stops: [
-                .init(color: Color(red: 0.06, green: 0.04, blue: 0.18), location: 0.0),
-                .init(color: Color(red: 0.08, green: 0.08, blue: 0.28), location: sunrise - 0.04),
-                .init(color: Color(red: 0.15, green: 0.25, blue: 0.50), location: sunrise - 0.015),
-                .init(color: Color(red: 0.45, green: 0.65, blue: 0.85), location: sunrise),
-                .init(color: Color(red: 0.62, green: 0.78, blue: 0.92), location: sunrise + 0.025),
-                .init(color: Color(red: 0.75, green: 0.85, blue: 0.95), location: postSunrise),
-                .init(color: Color(red: 0.85, green: 0.90, blue: 0.96), location: postSunrise + 0.03),
-                .init(color: Color(red: 0.90, green: 0.92, blue: 0.96), location: midMorning),
-                .init(color: Color(red: 0.92, green: 0.92, blue: 0.96), location: 0.5),
-                .init(color: Color(red: 0.90, green: 0.88, blue: 0.90), location: midAfternoon),
-                .init(color: Color(red: 0.92, green: 0.72, blue: 0.50), location: preSunset),
-                .init(color: Color(red: 0.90, green: 0.38, blue: 0.35), location: sunset),
-                .init(color: Color(red: 0.60, green: 0.20, blue: 0.42), location: sunset + 0.03),
-                .init(color: Color(red: 0.25, green: 0.10, blue: 0.32), location: sunset + 0.06),
-                .init(color: Color(red: 0.06, green: 0.04, blue: 0.18), location: 1.0),
+                .init(color: Color(red: 0.09, green: 0.07, blue: 0.24), location: 0.0),
+                .init(color: Color(red: 0.10, green: 0.10, blue: 0.32), location: sunrise - 0.10),
+                .init(color: Color(red: 0.18, green: 0.26, blue: 0.56), location: sunrise - 0.05),
+                .init(color: Color(red: 0.36, green: 0.54, blue: 0.84), location: sunrise - 0.015),
+                .init(color: Color(red: 0.56, green: 0.74, blue: 0.95), location: sunrise + 0.02),
+                .init(color: Color(red: 0.72, green: 0.84, blue: 0.98), location: sunrise + 0.07),
+                .init(color: Color(red: 0.84, green: 0.90, blue: 0.99), location: midMorning),
+                .init(color: Color(red: 0.88, green: 0.92, blue: 0.99), location: 0.5),
+                .init(color: Color(red: 0.93, green: 0.89, blue: 0.88), location: midAfternoon),
+                .init(color: Color(red: 0.98, green: 0.80, blue: 0.52), location: sunset - 0.07),
+                .init(color: Color(red: 0.98, green: 0.62, blue: 0.40), location: sunset - 0.035),
+                .init(color: Color(red: 0.94, green: 0.42, blue: 0.40), location: sunset),
+                .init(color: Color(red: 0.72, green: 0.26, blue: 0.50), location: sunset + 0.035),
+                .init(color: Color(red: 0.40, green: 0.15, blue: 0.42), location: min(sunset + 0.07, 0.98)),
+                .init(color: Color(red: 0.16, green: 0.08, blue: 0.30), location: min(sunset + 0.11, 0.99)),
+                .init(color: Color(red: 0.09, green: 0.07, blue: 0.24), location: 1.0),
             ],
             center: .center,
             startAngle: .degrees(-90),
