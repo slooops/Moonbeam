@@ -17,6 +17,7 @@ struct SleepSliderView: View {
     // @AppStorage-backed, so every instance sees the same UserDefaults values.
     private let profile = SleepProfile()
     @EnvironmentObject private var sunTimes: SunTimesService
+    @State private var showingLocation = false
 
     init(
         publishedBedMinutes: Binding<Int>,
@@ -99,10 +100,124 @@ struct SleepSliderView: View {
             dialView
             durationLabel
         }
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                sunTimes.requestLocationDetails()
+                showingLocation = true
+            } label: {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.body.weight(.medium))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("Current location")
+            .accessibilityHint("Shows your current city or location")
+            .padding(4)
+        }
         .onAppear { publishTimes() }
         .onChange(of: displayBedMinutes) { publishTimes() }
         .onChange(of: displayWakeMinutes) { publishTimes() }
         .onChange(of: sleepNowTrigger) { sleepNow() }
+        .sheet(isPresented: $showingLocation) {
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.largeTitle)
+                            .foregroundStyle(.purple.opacity(0.8))
+                            .accessibilityHidden(true)
+                        Text(sunTimes.locationName)
+                            .font(.title2.weight(.semibold))
+                        Text(sunTimes.locationDetails)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        if let events = sunTimes.sunEvents {
+                            HStack(alignment: .top, spacing: 24) {
+                                sunEventColumn("Morning", events: [
+                                    ("Astronomical dawn", events.astronomicalDawn),
+                                    ("Nautical dawn", events.nauticalDawn),
+                                    ("Civil dawn", events.civilDawn),
+                                    ("Sunrise", events.sunrise)
+                                ])
+                                sunEventColumn("Evening", events: [
+                                    ("Sunset", events.sunset),
+                                    ("Civil dusk", events.civilDusk),
+                                    ("Nautical dusk", events.nauticalDusk),
+                                    ("Astronomical dusk", events.astronomicalDusk)
+                                ])
+                            }
+                            .padding(.vertical, 8)
+                            Text("Local times · \(sunTimes.locationTimeZone.identifier.replacingOccurrences(of: "_", with: " "))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("— means no time is available for this date.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            SunAttribution()
+                        } else if let error = sunTimes.sunEventsError {
+                            Text(error)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        if sunTimes.isLoadingSunEvents {
+                            ProgressView("Loading sun times…")
+                                .font(.caption)
+                        }
+                        if sunTimes.isLocating {
+                            ProgressView()
+                        } else {
+                            Button("Refresh Location") {
+                                sunTimes.requestLocationDetails()
+                            }
+                            .buttonStyle(.glass)
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity)
+                }
+                .background {
+                    LinearGradient(colors: [Color("MidnightBlue"), Color("DeepSpace")],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .ignoresSafeArea()
+                }
+                .navigationTitle("Your Location")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingLocation = false }
+                    }
+                }
+            }
+            .presentationDetents([.height(640), .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private func sunEventColumn(_ title: String, events: [(String, Date?)]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title)
+                .font(.headline)
+            ForEach(0..<events.count, id: \.self) { index in
+                let event = events[index]
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(event.0)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let date = event.1 {
+                        Text(date, format: Date.FormatStyle(date: .omitted, time: .shortened,
+                                                          timeZone: sunTimes.locationTimeZone))
+                            .font(.body.weight(.medium).monospacedDigit())
+                    } else {
+                        Text("—")
+                            .accessibilityLabel("Unavailable")
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func publishTimes() {
@@ -245,6 +360,7 @@ struct SleepSliderView: View {
             .frame(width: size, height: size)
         }
         .aspectRatio(1, contentMode: .fit)
+
     }
 
     // MARK: - Background Sky Ring

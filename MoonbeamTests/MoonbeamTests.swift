@@ -11,6 +11,42 @@ import Testing
 
 struct MoonbeamTests {
 
+    @Test func sunEventsDecodeAllTwilightsAndISOTimeFormats() throws {
+        let data = Data(#"""
+        {
+          "sunrise": "2026-10-22T07:30:00+02:00",
+          "sunset": "2026-10-22T18:18:00.000+02:00",
+          "civil_twilight_begin": "2026-10-22T07:02:00+02:00",
+          "civil_twilight_end": "2026-10-22T18:46:00+02:00",
+          "nautical_twilight_begin": "2026-10-22T06:30:00+02:00",
+          "nautical_twilight_end": "2026-10-22T19:18:00+02:00",
+          "astronomical_twilight_begin": "2026-10-22T05:58:00+02:00",
+          "astronomical_twilight_end": "2026-10-22T19:50:00+02:00"
+        }
+        """#.utf8)
+        let events = try JSONDecoder().decode(SunEventTimes.self, from: data)
+        let ordered = [events.astronomicalDawn, events.nauticalDawn, events.civilDawn,
+                       events.sunrise, events.sunset, events.civilDusk,
+                       events.nauticalDusk, events.astronomicalDusk]
+        #expect(ordered.allSatisfy { $0 != nil })
+        let dates = ordered.compactMap { $0 }
+        #expect(dates == dates.sorted())
+        let sunrise = try #require(events.sunrise)
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        #expect(utc.component(.hour, from: sunrise) == 5)
+        #expect(utc.component(.minute, from: sunrise) == 30)
+    }
+
+    @Test func missingSunEventsStayUnavailable() throws {
+        let events = try JSONDecoder().decode(SunEventTimes.self,
+            from: Data(#"{"sunrise":null,"civil_twilight_begin":"not-a-date"}"#.utf8))
+        #expect(events.sunrise == nil)
+        #expect(events.sunset == nil)
+        #expect(events.civilDawn == nil)
+        #expect(events.astronomicalDusk == nil)
+    }
+
     private func makePlan(localOffset: Int, destOffset: Int, nights: Int = 3) -> JetLagPlan {
         JetLagPlanCalculator.generatePlan(
             originName: "Origin",
