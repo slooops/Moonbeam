@@ -6,27 +6,40 @@
 import SwiftUI
 
 struct SleepSliderView: View {
-    /// Live displayed bed/wake times, published up to the parent so buttons
-    /// outside this view (Set Alarm) always see what the dial shows.
+    /// Live displayed times, published so alarm creation uses what the dial shows.
     @Binding var publishedBedMinutes: Int
     @Binding var publishedWakeMinutes: Int
     /// Increment to snap the bedtime handle to the current time.
     @Binding var sleepNowTrigger: Int
+    private let alarmSet: Bool
+    private let isUpdatingAlarm: Bool
+    private let alarmAction: () -> Void
 
     // Plain instance, not @EnvironmentObject — SleepProfile is
     // @AppStorage-backed, so every instance sees the same UserDefaults values.
     private let profile = SleepProfile()
     @EnvironmentObject private var sunTimes: SunTimesService
     @State private var showingLocation = false
+    @State private var editingTime: HandleType?
+    @State private var pickerDate = Date()
+    @State private var usesExactTimes = false
+    @State private var bedtimeLocked = false
+    @State private var alarmLocked = false
 
     init(
         publishedBedMinutes: Binding<Int>,
         publishedWakeMinutes: Binding<Int>,
-        sleepNowTrigger: Binding<Int>
+        sleepNowTrigger: Binding<Int>,
+        alarmSet: Bool = false,
+        isUpdatingAlarm: Bool = false,
+        alarmAction: @escaping () -> Void = {}
     ) {
         _publishedBedMinutes = publishedBedMinutes
         _publishedWakeMinutes = publishedWakeMinutes
         _sleepNowTrigger = sleepNowTrigger
+        self.alarmSet = alarmSet
+        self.isUpdatingAlarm = isUpdatingAlarm
+        self.alarmAction = alarmAction
     }
 
     // Angles in radians on 24-hr dial (0 = 12 AM at top, clockwise)
@@ -43,47 +56,51 @@ struct SleepSliderView: View {
     @State private var arcDragPreviousAngle: Double = 0
     @State private var lastDragged: HandleType = .bed
 
-    private let ringWidth: CGFloat = 40
-    private let dialPadding: CGFloat = 32
+    private let ringWidth: CGFloat = 34
+    private let dialPadding: CGFloat = 36
     private let handleSize: CGFloat = 44
 
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
-    private enum HandleType { case bed, wake }
-
-    // Raw duration between the two angles (minutes)
-    private var rawDurationMinutes: Double {
-        SleepCalculator.durationMinutes(bedAngle: bedAngle, wakeAngle: wakeAngle)
+    private enum HandleType: String, Identifiable {
+        case bed, wake
+        var id: String { rawValue }
     }
 
-    private var snappedSleepMinutes: Int {
-        SleepCalculator.snapDuration(rawMinutes: rawDurationMinutes, cycleMinutes: profile.remCycleMinutes)
+    private var selectedTimes: SleepCalculator.DialTimes {
+        SleepCalculator.dialTimes(
+            bedMinutes: SleepCalculator.minutesSinceMidnight(from: bedAngle),
+            wakeMinutes: SleepCalculator.minutesSinceMidnight(from: wakeAngle),
+            cycleMinutes: profile.remCycleMinutes,
+            fallAsleepMinutes: profile.fallAsleepMinutes,
+            bedLocked: bedtimeLocked, wakeLocked: alarmLocked,
+            anchorBed: lastDragged == .bed, exact: usesExactTimes
+        )
     }
 
     private var cycleCount: Int {
-        SleepCalculator.cycleCount(sleepMinutes: snappedSleepMinutes, cycleMinutes: profile.remCycleMinutes)
+        totalSleepMinutes / profile.remCycleMinutes
     }
 
     private var totalSleepMinutes: Int {
-        snappedSleepMinutes + profile.fallAsleepMinutes
+        selectedTimes.sleepMinutes(fallAsleepMinutes: profile.fallAsleepMinutes)
+    }
+
+    private var fallAsleepBufferMinutes: Int {
+        min(max(0, profile.fallAsleepMinutes), selectedTimes.durationMinutes)
     }
 
     private var displayBedAngle: Double {
-        if lastDragged == .wake {
-            let wakeMins = SleepCalculator.minutesSinceMidnight(from: wakeAngle)
-            let bedMins = (wakeMins - totalSleepMinutes + 1440) % 1440
-            return Double(bedMins) / 1440.0 * 2.0 * .pi
-        }
-        return bedAngle
+        Double(selectedTimes.bedMinutes) / 1440 * 2 * .pi
     }
 
     private var displayWakeAngle: Double {
-        if lastDragged == .bed {
-            let bedMins = SleepCalculator.minutesSinceMidnight(from: bedAngle)
-            let wakeMins = (bedMins + totalSleepMinutes) % 1440
-            return Double(wakeMins) / 1440.0 * 2.0 * .pi
-        }
-        return wakeAngle
+        Double(selectedTimes.wakeMinutes) / 1440 * 2 * .pi
+    }
+
+    private var hasCycleMismatch: Bool {
+        bedtimeLocked && alarmLocked && !selectedTimes.fitsCycles(
+            cycleMinutes: profile.remCycleMinutes, fallAsleepMinutes: profile.fallAsleepMinutes)
     }
 
     private var displayBedMinutes: Int {
@@ -95,105 +112,229 @@ struct SleepSliderView: View {
     }
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 10) {
             timeLabels
+                .fixedSize(horizontal: false, vertical: true)
             dialView
-            durationLabel
-        }
-        .overlay(alignment: .bottomTrailing) {
-            Button {
-                sunTimes.requestLocationDetails()
-                showingLocation = true
-            } label: {
-                Image(systemName: "mappin.and.ellipse")
-                    .font(.body.weight(.medium))
-                    .frame(width: 44, height: 44)
+                .frame(maxHeight: .infinity)
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        sleepNowTrigger += 1
+                    } label: {
+                        Label("Sleep Now", systemImage: "moon.zzz.fill")
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                    }
+                    Button(action: alarmAction) {
+                        Label(alarmSet ? "Delete Alarm" : "Create Alarm",
+                              systemImage: alarmSet ? "trash" : "alarm.fill")
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                    }
+                    .disabled(isUpdatingAlarm)
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                Spacer(minLength: 0)
+                locationButton
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("Current location")
-            .accessibilityHint("Shows your current city or location")
-            .padding(4)
+            .fixedSize(horizontal: false, vertical: true)
+            if hasCycleMismatch {
+                Label("These times don’t fit whole REM cycles, including your fall-asleep buffer.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
         }
         .onAppear { publishTimes() }
         .onChange(of: displayBedMinutes) { publishTimes() }
         .onChange(of: displayWakeMinutes) { publishTimes() }
         .onChange(of: sleepNowTrigger) { sleepNow() }
-        .sheet(isPresented: $showingLocation) {
+        .sheet(item: $editingTime) { handle in
             NavigationStack {
-                ScrollView {
-                    VStack(spacing: 16) {
-                        Image(systemName: "mappin.and.ellipse")
-                            .font(.largeTitle)
-                            .foregroundStyle(.purple.opacity(0.8))
-                            .accessibilityHidden(true)
-                        Text(sunTimes.locationName)
-                            .font(.title2.weight(.semibold))
-                        Text(sunTimes.locationDetails)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        if let events = sunTimes.sunEvents {
-                            HStack(alignment: .top, spacing: 24) {
-                                sunEventColumn("Morning", events: [
-                                    ("Astronomical dawn", events.astronomicalDawn),
-                                    ("Nautical dawn", events.nauticalDawn),
-                                    ("Civil dawn", events.civilDawn),
-                                    ("Sunrise", events.sunrise)
-                                ])
-                                sunEventColumn("Evening", events: [
-                                    ("Sunset", events.sunset),
-                                    ("Civil dusk", events.civilDusk),
-                                    ("Nautical dusk", events.nauticalDusk),
-                                    ("Astronomical dusk", events.astronomicalDusk)
-                                ])
-                            }
-                            .padding(.vertical, 8)
-                            Text("Local times · \(sunTimes.locationTimeZone.identifier.replacingOccurrences(of: "_", with: " "))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("— means no time is available for this date.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            SunAttribution()
-                        } else if let error = sunTimes.sunEventsError {
-                            Text(error)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
+                DatePicker(handle == .bed ? "Bedtime" : "Alarm time", selection: $pickerDate,
+                           displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .padding()
+                    .navigationTitle(handle == .bed ? "Set Bedtime" : "Set Alarm Time")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { editingTime = nil }
                         }
-                        if sunTimes.isLoadingSunEvents {
-                            ProgressView("Loading sun times…")
-                                .font(.caption)
-                        }
-                        if sunTimes.isLocating {
-                            ProgressView()
-                        } else {
-                            Button("Refresh Location") {
-                                sunTimes.requestLocationDetails()
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                applyExactTime(handle)
+                                editingTime = nil
                             }
-                            .buttonStyle(.glass)
                         }
                     }
-                    .padding(24)
-                    .frame(maxWidth: .infinity)
-                }
-                .background {
-                    LinearGradient(colors: [Color("MidnightBlue"), Color("DeepSpace")],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .ignoresSafeArea()
-                }
-                .navigationTitle("Your Location")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showingLocation = false }
-                    }
-                }
             }
-            .presentationDetents([.height(640), .large])
-            .presentationDragIndicator(.visible)
+            .presentationDetents([.height(320)])
+        }
+        .sheet(isPresented: $showingLocation) {
+            locationSheet
         }
     }
+
+    private func captureDisplayedTimes() {
+        let bed = displayBedAngle
+        let wake = displayWakeAngle
+        bedAngle = bed
+        wakeAngle = wake
+    }
+
+    private func beginCycleDrag() {
+        captureDisplayedTimes()
+        usesExactTimes = false
+    }
+
+    private func timeLock(_ title: String, isLocked: Bool, handle: HandleType) -> some View {
+        Button {
+            captureDisplayedTimes()
+            usesExactTimes = true
+            if handle == .bed {
+                bedtimeLocked.toggle()
+            } else {
+                alarmLocked.toggle()
+            }
+            haptic.impactOccurred()
+        } label: {
+            Label(title, systemImage: isLocked ? "checkmark.square.fill" : "square")
+                .font(.caption)
+                .foregroundStyle(isLocked ? .white : .white.opacity(0.6))
+                .frame(minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isLocked ? "Locked" : "Unlocked")
+        .accessibilityHint("Prevents automatic changes. You can still drag or edit this time.")
+        .accessibilityAddTraits(isLocked ? .isSelected : [])
+    }
+
+    private func timeValueButton(_ handle: HandleType) -> some View {
+        let minutes = handle == .bed ? displayBedMinutes : displayWakeMinutes
+        return Button {
+            pickerDate = SleepCalculator.date(fromMinutes: minutes, relativeTo: Date())
+            editingTime = handle
+        } label: {
+            Text(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
+                .font(.title3.weight(.bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(handle == .bed ? "Edit bedtime" : "Edit alarm time")
+        .accessibilityValue(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
+        .accessibilityHint("Choose an exact time to the minute")
+    }
+
+    private func applyExactTime(_ handle: HandleType) {
+        captureDisplayedTimes()
+        let calendar = Calendar.current
+        let minutes = calendar.component(.hour, from: pickerDate) * 60 + calendar.component(.minute, from: pickerDate)
+        let angle = Double(minutes) / 1440 * 2 * .pi
+        usesExactTimes = true
+        if handle == .bed { bedAngle = angle } else { wakeAngle = angle }
+        publishTimes()
+    }
+
+    private var locationButton: some View {
+        Button {
+            sunTimes.requestLocationDetails()
+            showingLocation = true
+        } label: {
+            Image(systemName: "mappin.and.ellipse")
+                .font(.body.weight(.medium))
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel("Current location")
+        .accessibilityHint("Shows your current city or location")
+        .padding(4)
+    }
+
+    private var locationSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.largeTitle)
+                        .foregroundStyle(.purple.opacity(0.8))
+                        .accessibilityHidden(true)
+                    Text(sunTimes.locationName)
+                        .font(.title2.weight(.semibold))
+                    Text(sunTimes.locationDetails)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    if let events = sunTimes.sunEvents {
+                        HStack(alignment: .top, spacing: 24) {
+                            sunEventColumn("Morning", events: [
+                                ("Astronomical dawn", events.astronomicalDawn),
+                                ("Nautical dawn", events.nauticalDawn),
+                                ("Civil dawn", events.civilDawn),
+                                ("Sunrise", events.sunrise)
+                            ])
+                            sunEventColumn("Evening", events: [
+                                ("Sunset", events.sunset),
+                                ("Civil dusk", events.civilDusk),
+                                ("Nautical dusk", events.nauticalDusk),
+                                ("Astronomical dusk", events.astronomicalDusk)
+                            ])
+                        }
+                        .padding(.vertical, 8)
+                        Text("Local times · \(sunTimes.locationTimeZone.identifier.replacingOccurrences(of: "_", with: " "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("— means no time is available for this date.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        SunAttribution()
+                    } else if let error = sunTimes.sunEventsError {
+                        Text(error)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    if sunTimes.isLoadingSunEvents {
+                        ProgressView("Loading sun times…")
+                            .font(.caption)
+                    }
+                    if sunTimes.isLocating {
+                        ProgressView()
+                    } else {
+                        Button("Refresh Location") {
+                            sunTimes.requestLocationDetails()
+                        }
+                        .buttonStyle(.glass)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+            }
+            .background {
+                LinearGradient(colors: [Color("MidnightBlue"), Color("DeepSpace")],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .ignoresSafeArea()
+            }
+            .navigationTitle("Your Location")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showingLocation = false }
+                }
+            }
+        }
+        .presentationDetents([.height(640), .large])
+        .presentationDragIndicator(.visible)
+    }
+
 
     private func sunEventColumn(_ title: String, events: [(String, Date?)]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -228,43 +369,54 @@ struct SleepSliderView: View {
     // MARK: - Time Labels
 
     private var timeLabels: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 4) {
                 Label("BEDTIME", systemImage: "bed.double.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(SleepCalculator.formattedTime(minutesSinceMidnight: displayBedMinutes))
-                    .font(.title2.weight(.bold).monospacedDigit())
+                timeValueButton(.bed)
                 Text(displayBedMinutes >= 720 ? "Tonight" : "Tomorrow")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                timeLock("Fix bedtime", isLocked: bedtimeLocked, handle: .bed)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Color.clear.frame(width: 112, height: 1)
             VStack(alignment: .trailing, spacing: 4) {
                 Label("WAKE UP", systemImage: "alarm.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(SleepCalculator.formattedTime(minutesSinceMidnight: displayWakeMinutes))
-                    .font(.title2.weight(.bold).monospacedDigit())
+                timeValueButton(.wake)
                 Text(displayWakeMinutes < 720 ? "Tomorrow" : "Today")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                timeLock("Fix alarm", isLocked: alarmLocked, handle: .wake)
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 24)
+        .overlay(alignment: .top) {
+            durationLabel
+                .frame(width: 112)
+                .offset(y: -4)
+        }
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Duration Label
 
     private var durationLabel: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             Text(SleepCalculator.formattedDuration(minutes: totalSleepMinutes))
-                .font(.title3.weight(.semibold).monospacedDigit())
+                .font(.headline.monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
             Text("\(cycleCount) REM cycle\(cycleCount == 1 ? "" : "s")")
-                .font(.subheadline)
+                .font(.caption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
                 .background(
                     Capsule()
                         .fill(.ultraThinMaterial)
@@ -288,7 +440,7 @@ struct SleepSliderView: View {
 
             ZStack {
                 // Recessed groove shadow, drawn beneath the ring so only its
-                // edges show and the sky colors stay at full strength.
+                // edges show beneath the muted sky colors.
                 Circle()
                     .stroke(Color.black.opacity(0.35), lineWidth: ringWidth + 8)
                     .blur(radius: 5)
@@ -333,6 +485,11 @@ struct SleepSliderView: View {
                 // REM segment dividers
                 remSegmentDividers(center: center, radius: midRadius)
 
+                if fallAsleepBufferMinutes > 0 {
+                    fallAsleepBox(center: center, radius: midRadius)
+                        .allowsHitTesting(false)
+                }
+
                 // Invisible arc hit target for whole-arc dragging
                 arcHitTarget(center: center, radius: midRadius)
                     .gesture(arcDragGesture(center: center))
@@ -358,41 +515,74 @@ struct SleepSliderView: View {
                 .gesture(dragGesture(for: .wake, center: center))
             }
             .frame(width: size, height: size)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("sleepDial")
+            .coordinateSpace(name: "sleepDial")
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
-        .aspectRatio(1, contentMode: .fit)
 
     }
 
     // MARK: - Background Sky Ring
 
     private func backgroundSkyRing(center: CGPoint, radius: CGFloat) -> some View {
-        let sunrise = max(0.15, min(0.40, Double(sunTimes.sunriseMinutes) / 1440.0))
-        let sunset = max(0.60, min(0.92, Double(sunTimes.sunsetMinutes) / 1440.0))
+        let night = Color(red: 0.09, green: 0.07, blue: 0.24)
+        let daylight = Color(red: 0.84, green: 0.81, blue: 0.69)
+        let events = sunTimes.sunEvents
+        let calendar = Calendar.current
+        func minutes(_ date: Date?) -> Double? {
+            guard let date else { return nil }
+            return Double(calendar.component(.hour, from: date) * 60
+                          + calendar.component(.minute, from: date))
+        }
+        func wrapped(_ value: Double) -> Double {
+            (value.truncatingRemainder(dividingBy: 1440) + 1440)
+                .truncatingRemainder(dividingBy: 1440)
+        }
 
-        let midMorning = min((sunrise + 0.5) / 2 + 0.04, 0.48)
-        let midAfternoon = min(max((0.5 + sunset) / 2 - 0.02, 0.52), sunset - 0.08)
+        let sunrise = minutes(events?.sunrise) ?? Double(sunTimes.sunriseMinutes)
+        let sunset = sunrise + wrapped((minutes(events?.sunset) ?? Double(sunTimes.sunsetMinutes)) - sunrise)
+        let nightLength = 1440 - (sunset - sunrise)
+        // Use the outermost twilight boundaries, with a quiet fallback while GPS loads.
+        let dawnSpan = minutes(events?.astronomicalDawn).map { wrapped(sunrise - $0) }
+            ?? min(90, nightLength / 2)
+        let duskSpan = minutes(events?.astronomicalDusk).map { wrapped($0 - sunset) }
+            ?? min(90, nightLength / 2)
+        let dawn = sunrise - dawnSpan
+        let dusk = sunset + duskSpan
+        let shoulder = (sunset - sunrise) * 0.18
+        let anchors: [(Double, Color)] = [
+            (dawn, night),
+            (dawn + dawnSpan * 0.55, Color(red: 0.18, green: 0.26, blue: 0.56)),
+            (sunrise, Color(red: 0.56, green: 0.74, blue: 0.95)),
+            (sunrise + shoulder, daylight),
+            (sunset - shoulder, daylight),
+            (sunset - shoulder * 0.35, Color(red: 0.98, green: 0.80, blue: 0.52)),
+            (sunset, Color(red: 0.94, green: 0.42, blue: 0.40)),
+            (sunset + duskSpan * 0.32, Color(red: 0.72, green: 0.26, blue: 0.50)),
+            (sunset + duskSpan * 0.64, Color(red: 0.40, green: 0.15, blue: 0.42)),
+            (dusk, night), (dawn + 1440, night)
+        ]
 
-        // Wide, overlapping stops either side of sunrise and sunset so the
-        // night/day transitions blend instead of snapping.
+        func skyColor(at minute: Double) -> Color {
+            // Unwrap around dawn so the gradient remains continuous through midnight.
+            let time = dawn + wrapped(minute - dawn)
+            for index in 1..<anchors.count {
+                let (start, from) = anchors[index - 1]
+                let (end, to) = anchors[index]
+                if time <= end {
+                    let fraction = max(0, min(1, (time - start) / max(1, end - start)))
+                    return from.mix(with: to, by: fraction)
+                }
+            }
+            return night
+        }
+
+        // Include the exact event positions as well as regular samples.
+        let samples = Set(Array(stride(from: 0.0, through: 1440.0, by: 15.0))
+            + anchors.map { wrapped($0.0) }).sorted()
         let gradient = AngularGradient(
-            stops: [
-                .init(color: Color(red: 0.09, green: 0.07, blue: 0.24), location: 0.0),
-                .init(color: Color(red: 0.10, green: 0.10, blue: 0.32), location: sunrise - 0.10),
-                .init(color: Color(red: 0.18, green: 0.26, blue: 0.56), location: sunrise - 0.05),
-                .init(color: Color(red: 0.36, green: 0.54, blue: 0.84), location: sunrise - 0.015),
-                .init(color: Color(red: 0.56, green: 0.74, blue: 0.95), location: sunrise + 0.02),
-                .init(color: Color(red: 0.72, green: 0.84, blue: 0.98), location: sunrise + 0.07),
-                .init(color: Color(red: 0.84, green: 0.90, blue: 0.99), location: midMorning),
-                .init(color: Color(red: 0.88, green: 0.92, blue: 0.99), location: 0.5),
-                .init(color: Color(red: 0.93, green: 0.89, blue: 0.88), location: midAfternoon),
-                .init(color: Color(red: 0.98, green: 0.80, blue: 0.52), location: sunset - 0.07),
-                .init(color: Color(red: 0.98, green: 0.62, blue: 0.40), location: sunset - 0.035),
-                .init(color: Color(red: 0.94, green: 0.42, blue: 0.40), location: sunset),
-                .init(color: Color(red: 0.72, green: 0.26, blue: 0.50), location: sunset + 0.035),
-                .init(color: Color(red: 0.40, green: 0.15, blue: 0.42), location: min(sunset + 0.07, 0.98)),
-                .init(color: Color(red: 0.16, green: 0.08, blue: 0.30), location: min(sunset + 0.11, 0.99)),
-                .init(color: Color(red: 0.09, green: 0.07, blue: 0.24), location: 1.0),
-            ],
+            stops: samples.map { .init(color: skyColor(at: $0), location: $0 / 1440) },
             center: .center,
             startAngle: .degrees(-90),
             endAngle: .degrees(270)
@@ -400,6 +590,7 @@ struct SleepSliderView: View {
 
         return Circle()
             .stroke(gradient, lineWidth: ringWidth)
+            .saturation(0.5)
             .frame(width: radius * 2, height: radius * 2)
             .position(center)
     }
@@ -408,9 +599,7 @@ struct SleepSliderView: View {
 
     private func clockFace(center: CGPoint, midRadius: CGFloat) -> some View {
         let innerRingEdge = midRadius - ringWidth / 2
-        let labelRadius = innerRingEdge - 18
-        let sunTimeLabelRadius = innerRingEdge - 40
-        let iconRadius = innerRingEdge - 44
+        let sunTimeLabelRadius = innerRingEdge - 18
 
         let sunriseText = SleepCalculator.formattedTime(minutesSinceMidnight: sunTimes.sunriseMinutes)
         let sunsetText = SleepCalculator.formattedTime(minutesSinceMidnight: sunTimes.sunsetMinutes)
@@ -418,85 +607,64 @@ struct SleepSliderView: View {
         return ZStack {
             hourTickMarks(center: center, midRadius: midRadius)
 
-            clockLabel("12AM", angle: -.pi / 2, radius: labelRadius, center: center)
-
-            // Sunrise time + icon (right side, 6AM position)
+            // Match each solar event to the same 24-hour angle used by the ring.
             sunTimeLabel(
                 time: sunriseText,
                 icon: "sunrise.fill",
-                iconColor: .orange.opacity(0.7),
-                angle: 0,
+                iconColor: Color(red: 0.72, green: 0.68, blue: 0.58),
+                angle: Double(sunTimes.sunriseMinutes) / 1440 * 2 * .pi - .pi / 2,
                 radius: sunTimeLabelRadius,
-                center: center,
-                iconTrailing: true
+                center: center
             )
 
-            clockLabel("12PM", angle: .pi / 2, radius: labelRadius, center: center)
-
-            // Sunset time + icon (left side, 6PM position)
             sunTimeLabel(
                 time: sunsetText,
                 icon: "sunset.fill",
-                iconColor: .orange.opacity(0.6),
-                angle: .pi,
+                iconColor: Color(red: 0.72, green: 0.68, blue: 0.58),
+                angle: Double(sunTimes.sunsetMinutes) / 1440 * 2 * .pi - .pi / 2,
                 radius: sunTimeLabelRadius,
-                center: center,
-                iconTrailing: false
+                center: center
             )
 
-            Image(systemName: "moon.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(.indigo.opacity(0.7))
-                .position(x: center.x, y: center.y - iconRadius)
-
-            Image(systemName: "sun.max.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(.yellow.opacity(0.7))
-                .position(x: center.x, y: center.y + iconRadius)
         }
     }
 
-    /// Displays a sunrise/sunset time with an icon beside it on the dial
+    /// Keep each time on the icon's horizontal baseline, toward the dial center.
     private func sunTimeLabel(
         time: String,
         icon: String,
         iconColor: Color,
         angle: Double,
         radius: CGFloat,
-        center: CGPoint,
-        iconTrailing: Bool
+        center: CGPoint
     ) -> some View {
-        let x = center.x + cos(angle) * radius
-        let y = center.y + sin(angle) * radius
-
-        return HStack(spacing: 4) {
-            if !iconTrailing {
-                Image(systemName: icon)
-                    .font(.system(size: 16))
-                    .foregroundStyle(iconColor)
-            }
+        let iconX = center.x + cos(angle) * radius
+        let iconY = center.y + sin(angle) * radius
+        let textOffset: CGFloat = cos(angle) >= 0 ? -34 : 34
+        return ZStack {
+            Image(systemName: icon)
+                .font(.system(size: 15))
+                .foregroundStyle(iconColor)
+                .position(x: iconX, y: iconY)
             Text(time)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.5))
-            if iconTrailing {
-                Image(systemName: icon)
-                    .font(.system(size: 16))
-                    .foregroundStyle(iconColor)
-            }
+                .fixedSize()
+                .position(x: iconX + textOffset, y: iconY)
         }
-        .position(x: x, y: y)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(icon == "sunrise.fill" ? "Sunrise" : "Sunset"), \(time)")
     }
 
     private func hourTickMarks(center: CGPoint, midRadius: CGFloat) -> some View {
-        ForEach(0..<24, id: \.self) { hour in
+        ForEach((0..<24).filter { $0 % 6 != 0 }, id: \.self) { hour in
             hourTick(hour: hour, center: center, midRadius: midRadius)
         }
     }
 
     private func hourTick(hour: Int, center: CGPoint, midRadius: CGFloat) -> some View {
         let tickAngle = Double(hour) / 24.0 * 2.0 * .pi - .pi / 2
-        let isMajor = hour % 6 == 0
-        let tickLength: CGFloat = isMajor ? 10 : 5
+        let tickLength: CGFloat = 5
         let outerRingEdge = midRadius + ringWidth / 2
         let tickOuter = outerRingEdge + 2 + tickLength
         let tickInner = outerRingEdge + 2
@@ -511,29 +679,15 @@ struct SleepSliderView: View {
                 y: center.y + sin(tickAngle) * tickInner
             ))
         }
-        .stroke(Color.white.opacity(isMajor ? 0.4 : 0.15), lineWidth: isMajor ? 2 : 1)
-    }
-
-    private func clockLabel(_ text: String, angle: Double, radius: CGFloat, center: CGPoint) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.white.opacity(0.5))
-            .position(
-                x: center.x + cos(angle) * radius,
-                y: center.y + sin(angle) * radius
-            )
+        .stroke(Color.white.opacity(0.15), lineWidth: 1)
     }
 
     // MARK: - Sleep Arc (Glass Look — Continuous Fill)
 
     private func sleepArc(center: CGPoint, radius: CGFloat) -> some View {
-        let startSwiftUI = displayBedAngle - .pi / 2
-        let endSwiftUI = displayWakeAngle - .pi / 2
-
-        var arcSpan = endSwiftUI - startSwiftUI
-        if arcSpan <= 0 { arcSpan += 2 * .pi }
-
-        let trimEnd = CGFloat(arcSpan / (2 * .pi))
+        let bufferAngle = Double(fallAsleepBufferMinutes) / 1440 * 2 * .pi
+        let startSwiftUI = displayBedAngle + bufferAngle - .pi / 2
+        let trimEnd = CGFloat(totalSleepMinutes) / 1440
 
         return ZStack {
             // Soft glow behind — single continuous arc
@@ -590,6 +744,24 @@ struct SleepSliderView: View {
 
     // MARK: - Arc Hit Target
 
+    /// A hollow capsule with semicircular short ends, aligned radially with the buffer.
+    private func fallAsleepBox(center: CGPoint, radius: CGFloat) -> some View {
+        let span = Double(fallAsleepBufferMinutes) / 1440 * 2 * .pi
+        let midpoint = displayBedAngle + span / 2 - .pi / 2
+        let capsuleRadius = radius + 5
+        let width = max(8, capsuleRadius * CGFloat(span))
+
+        return Capsule()
+            .fill(Color("DeepSpace"))
+            .overlay(Capsule().stroke(.white.opacity(0.65), lineWidth: 1.5))
+            .frame(width: width, height: ringWidth + 10)
+            .rotationEffect(.radians(midpoint + .pi / 2))
+            .position(x: center.x + cos(midpoint) * capsuleRadius,
+                      y: center.y + sin(midpoint) * capsuleRadius)
+            .accessibilityLabel("Fall-asleep buffer")
+            .accessibilityValue("\(fallAsleepBufferMinutes) minutes")
+    }
+
     private func arcHitTarget(center: CGPoint, radius: CGFloat) -> some View {
         let startSwiftUI = displayBedAngle - .pi / 2
         let endSwiftUI = displayWakeAngle - .pi / 2
@@ -612,7 +784,7 @@ struct SleepSliderView: View {
         let cycleFraction = Double(profile.remCycleMinutes) / 1440.0 * 2.0 * .pi
         let fallAsleepOffset = Double(profile.fallAsleepMinutes) / 1440.0 * 2.0 * .pi
 
-        return ForEach(1..<count, id: \.self) { i in
+        return ForEach(1..<max(1, count), id: \.self) { i in
             remDivider(
                 index: i,
                 center: center,
@@ -652,41 +824,60 @@ struct SleepSliderView: View {
     // MARK: - Handle
 
     private func handleView(angle: Double, center: CGPoint, radius: CGFloat, icon: String, isDragging: Bool) -> some View {
+        let isFixed = icon == "bed.double.fill" ? bedtimeLocked : alarmLocked
         let swAngle = angle - .pi / 2
-        let x = center.x + cos(swAngle) * radius
-        let y = center.y + sin(swAngle) * radius
+        let innerRadius = radius - ringWidth / 2 - 3
+        let outerRadius = radius + ringWidth / 2 + 6
+        let iconRadius = radius + ringWidth / 2 + 27
+        let marker = Path { path in
+            path.move(to: CGPoint(x: center.x + cos(swAngle) * innerRadius,
+                                  y: center.y + sin(swAngle) * innerRadius))
+            path.addLine(to: CGPoint(x: center.x + cos(swAngle) * outerRadius,
+                                    y: center.y + sin(swAngle) * outerRadius))
+        }
 
-        return Image(systemName: icon)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: handleSize, height: handleSize)
-            .background(
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-            )
-            .overlay(
-                Circle()
-                    .stroke(
-                        LinearGradient(
-                            colors: [.white.opacity(0.45), .white.opacity(0.08)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.5
-                    )
-                    .frame(width: handleSize, height: handleSize)
-            )
-            .scaleEffect(isDragging ? 1.15 : 1.0)
-            .animation(.spring(response: 0.3), value: isDragging)
-            .position(x: x, y: y)
+        return ZStack {
+            marker
+                .stroke(.white.opacity(0.95), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .shadow(color: .black.opacity(0.45), radius: 3)
+            // Keep both the line and floating icon easy to grab.
+            marker
+                .stroke(.white.opacity(0.001), style: StrokeStyle(lineWidth: 26, lineCap: .round))
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .overlay(alignment: .topTrailing) {
+                    if isFixed {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .offset(x: 8, y: -3)
+                    }
+                }
+                .shadow(color: .black.opacity(0.5), radius: 4, y: 2)
+                .frame(width: handleSize, height: handleSize)
+                .contentShape(Circle())
+                .scaleEffect(isDragging ? 1.15 : 1.0)
+                .position(x: center.x + cos(swAngle) * iconRadius,
+                          y: center.y + sin(swAngle) * iconRadius)
+        }
+        .frame(width: center.x * 2, height: center.y * 2)
+        .animation(.spring(response: 0.3), value: isDragging)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(icon == "bed.double.fill" ? "Bedtime" : "Wake up")
+        .accessibilityValue(SleepCalculator.formattedTime(
+            minutesSinceMidnight: SleepCalculator.minutesSinceMidnight(from: angle))
+            + (isFixed ? ", fixed" : ""))
+        .accessibilityHint("Drag to change this time")
+
     }
 
     // MARK: - Drag Gesture
 
     private func dragGesture(for handle: HandleType, center: CGPoint) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("sleepDial"))
             .onChanged { value in
+                if !isDraggingBed && !isDraggingWake { beginCycleDrag() }
                 let dx = value.location.x - center.x
                 let dy = value.location.y - center.y
                 var angle = atan2(dy, dx) + .pi / 2
@@ -716,9 +907,9 @@ struct SleepSliderView: View {
                 }
             }
             .onEnded { _ in
+                guard isDraggingBed || isDraggingWake else { return }
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                    bedAngle = displayBedAngle
-                    wakeAngle = displayWakeAngle
+                    captureDisplayedTimes()
                 }
                 isDraggingBed = false
                 isDraggingWake = false
@@ -728,14 +919,16 @@ struct SleepSliderView: View {
     // MARK: - Arc Drag Gesture
 
     private func arcDragGesture(center: CGPoint) -> some Gesture {
-        DragGesture(minimumDistance: 5)
+        DragGesture(minimumDistance: 5, coordinateSpace: .named("sleepDial"))
             .onChanged { value in
+                guard !(bedtimeLocked && alarmLocked) else { return }
                 let dx = value.location.x - center.x
                 let dy = value.location.y - center.y
                 var currentAngle = atan2(dy, dx) + .pi / 2
                 if currentAngle < 0 { currentAngle += 2 * .pi }
 
                 if !isDraggingArc {
+                    beginCycleDrag()
                     isDraggingArc = true
                     arcDragPreviousAngle = currentAngle
                     return
@@ -745,14 +938,19 @@ struct SleepSliderView: View {
                 if delta > .pi { delta -= 2 * .pi }
                 if delta < -.pi { delta += 2 * .pi }
 
-                bedAngle = (bedAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
-                wakeAngle = (wakeAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                if !bedtimeLocked {
+                    bedAngle = (bedAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                }
+                if !alarmLocked {
+                    wakeAngle = (wakeAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                }
                 if bedAngle < 0 { bedAngle += 2 * .pi }
                 if wakeAngle < 0 { wakeAngle += 2 * .pi }
 
                 arcDragPreviousAngle = currentAngle
             }
             .onEnded { _ in
+                guard isDraggingArc else { return }
                 isDraggingArc = false
                 let bedMins = SleepCalculator.minutesSinceMidnight(from: bedAngle)
                 let snappedBedMins = ((bedMins + 7) / 15) * 15
@@ -760,10 +958,13 @@ struct SleepSliderView: View {
                 let snappedWakeMins = ((wakeMins + 7) / 15) * 15
 
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                    bedAngle = Double(snappedBedMins % 1440) / 1440.0 * 2.0 * .pi
-                    wakeAngle = Double(snappedWakeMins % 1440) / 1440.0 * 2.0 * .pi
-                    bedAngle = displayBedAngle
-                    wakeAngle = displayWakeAngle
+                    if !bedtimeLocked {
+                        bedAngle = Double(snappedBedMins % 1440) / 1440.0 * 2.0 * .pi
+                    }
+                    if !alarmLocked {
+                        wakeAngle = Double(snappedWakeMins % 1440) / 1440.0 * 2.0 * .pi
+                    }
+                    captureDisplayedTimes()
                 }
             }
     }
@@ -771,6 +972,8 @@ struct SleepSliderView: View {
     // MARK: - Sleep Now
 
     private func sleepNow() {
+        beginCycleDrag()
+        lastDragged = .bed
         let now = Date()
         let cal = Calendar.current
         let hour = cal.component(.hour, from: now)

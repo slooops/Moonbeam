@@ -7,6 +7,38 @@ import Foundation
 
 enum SleepCalculator {
 
+    struct DialTimes: Equatable {
+        let bedMinutes: Int
+        let wakeMinutes: Int
+
+        var durationMinutes: Int {
+            let duration = (wakeMinutes - bedMinutes + 1440) % 1440
+            return duration == 0 ? 1440 : duration
+        }
+
+        func sleepMinutes(fallAsleepMinutes: Int) -> Int {
+            max(0, durationMinutes - max(0, fallAsleepMinutes))
+        }
+
+        func fitsCycles(cycleMinutes: Int, fallAsleepMinutes: Int) -> Bool {
+            let sleep = durationMinutes - fallAsleepMinutes
+            return cycleMinutes > 0 && sleep >= cycleMinutes && sleep % cycleMinutes == 0
+        }
+    }
+
+    static func dialTimes(bedMinutes: Int, wakeMinutes: Int, cycleMinutes: Int,
+                          fallAsleepMinutes: Int, bedLocked: Bool, wakeLocked: Bool,
+                          anchorBed: Bool, exact: Bool) -> DialTimes {
+        let original = DialTimes(bedMinutes: bedMinutes, wakeMinutes: wakeMinutes)
+        if exact || (bedLocked && wakeLocked) { return original }
+        let duration = snapDuration(rawMinutes: Double(original.durationMinutes), cycleMinutes: cycleMinutes)
+            + fallAsleepMinutes
+        if bedLocked || (!wakeLocked && anchorBed) {
+            return DialTimes(bedMinutes: bedMinutes, wakeMinutes: (bedMinutes + duration) % 1440)
+        }
+        return DialTimes(bedMinutes: (wakeMinutes - duration + 1440) % 1440, wakeMinutes: wakeMinutes)
+    }
+
     // MARK: - Angle ↔ Time (24-hour clock face)
     // 12 AM at top (0°/360°), 6 AM at right (90°), 12 PM at bottom (180°), 6 PM at left (270°)
 

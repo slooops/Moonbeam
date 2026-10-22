@@ -11,6 +11,74 @@ import Testing
 
 struct MoonbeamTests {
 
+    @Test func displayedSleepExcludesFallAsleepBuffer() {
+        let window = SleepCalculator.DialTimes(bedMinutes: 22 * 60 + 30, wakeMinutes: 7 * 60 + 45)
+        #expect(window.durationMinutes == 555)
+        #expect(window.sleepMinutes(fallAsleepMinutes: 15) == 540)
+        #expect(window.sleepMinutes(fallAsleepMinutes: 0) == 555)
+        let short = SleepCalculator.DialTimes(bedMinutes: 22 * 60 + 30, wakeMinutes: 22 * 60 + 40)
+        #expect(short.sleepMinutes(fallAsleepMinutes: 15) == 0)
+    }
+
+    @Test func tomorrowAlarmsRespectLocalDayBoundariesAndDST() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "Europe/Rome"))
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 24, hour: 12)))
+        let tomorrow = try #require(calendar.date(from: DateComponents(year: 2026, month: 10, day: 25)))
+        let nextDay = try #require(calendar.date(byAdding: .day, value: 1, to: tomorrow))
+        #expect(nextDay.timeIntervalSince(tomorrow) == 25 * 3600)
+        func alarm(at date: Date) -> ScheduledAlarm {
+            ScheduledAlarm(id: UUID(), title: "Test", fireDate: date, reminderID: nil)
+        }
+        let midnight = alarm(at: tomorrow)
+        let lastMinute = alarm(at: nextDay.addingTimeInterval(-60))
+        let results = ScheduledAlarm.forTomorrow([
+            alarm(at: nextDay), lastMinute, alarm(at: now), midnight
+        ], relativeTo: now, calendar: calendar)
+        #expect(results == [midnight, lastMinute])
+        #expect(ScheduledAlarm.forTomorrow([], relativeTo: now, calendar: calendar).isEmpty)
+    }
+
+    @Test func lockedTimesStayExactAcrossCycleAdjustments() {
+        for freeMinute in stride(from: 0, to: 1440, by: 17) {
+            let bedLocked = SleepCalculator.dialTimes(
+                bedMinutes: 22 * 60 + 37, wakeMinutes: freeMinute,
+                cycleMinutes: 90, fallAsleepMinutes: 15,
+                bedLocked: true, wakeLocked: false, anchorBed: false, exact: false)
+            #expect(bedLocked.bedMinutes == 22 * 60 + 37)
+            #expect(bedLocked.fitsCycles(cycleMinutes: 90, fallAsleepMinutes: 15))
+
+            let wakeLocked = SleepCalculator.dialTimes(
+                bedMinutes: freeMinute, wakeMinutes: 7 * 60 + 13,
+                cycleMinutes: 90, fallAsleepMinutes: 15,
+                bedLocked: false, wakeLocked: true, anchorBed: true, exact: false)
+            #expect(wakeLocked.wakeMinutes == 7 * 60 + 13)
+            #expect(wakeLocked.fitsCycles(cycleMinutes: 90, fallAsleepMinutes: 15))
+        }
+    }
+
+    @Test func bothLockedPreserveTimesAndDetectIncompleteCycles() {
+        let times = SleepCalculator.dialTimes(
+            bedMinutes: 22 * 60 + 37, wakeMinutes: 7 * 60 + 13,
+            cycleMinutes: 90, fallAsleepMinutes: 15,
+            bedLocked: true, wakeLocked: true, anchorBed: true, exact: false)
+        #expect(times.bedMinutes == 22 * 60 + 37)
+        #expect(times.wakeMinutes == 7 * 60 + 13)
+        #expect(times.durationMinutes == 516)
+        #expect(!times.fitsCycles(cycleMinutes: 90, fallAsleepMinutes: 15))
+        let complete = SleepCalculator.DialTimes(bedMinutes: 22 * 60 + 37, wakeMinutes: 7 * 60 + 52)
+        #expect(complete.fitsCycles(cycleMinutes: 90, fallAsleepMinutes: 15))
+    }
+
+    @Test func exactPickerTimesBypassCycleSnapping() {
+        let times = SleepCalculator.dialTimes(
+            bedMinutes: 22 * 60 + 37, wakeMinutes: 7 * 60 + 13,
+            cycleMinutes: 90, fallAsleepMinutes: 15,
+            bedLocked: false, wakeLocked: false, anchorBed: true, exact: true)
+        #expect(times.bedMinutes == 22 * 60 + 37)
+        #expect(times.wakeMinutes == 7 * 60 + 13)
+    }
+
     @Test func sunEventsDecodeAllTwilightsAndISOTimeFormats() throws {
         let data = Data(#"""
         {

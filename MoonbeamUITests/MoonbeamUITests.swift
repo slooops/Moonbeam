@@ -56,14 +56,93 @@ final class MoonbeamUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let setAlarm = app.buttons["Set Alarm"]
-        XCTAssertTrue(setAlarm.waitForExistence(timeout: 5))
-        setAlarm.tap()
-        app.tap()  // nudge so the interruption monitor fires if a prompt is up
+        let createAlarm = app.buttons["Create Alarm"]
+        let deleteAlarm = app.buttons["Delete Alarm"]
+        if deleteAlarm.exists { deleteAlarm.tap() }
+        XCTAssertTrue(createAlarm.waitForExistence(timeout: 5))
+        createAlarm.tap()
+        app.tap()  // allow the permission interruption monitor to run
 
-        // The button flips to "Alarm Set" for 3 seconds on success.
-        XCTAssertTrue(app.staticTexts["Alarm Set"].waitForExistence(timeout: 8))
+        XCTAssertTrue(deleteAlarm.waitForExistence(timeout: 8))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(deleteAlarm.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Other alarms created in iOS are not visible here"].exists)
+        deleteAlarm.tap()
+        XCTAssertTrue(createAlarm.waitForExistence(timeout: 5))
+        XCTAssertFalse(deleteAlarm.exists)
         XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    @MainActor
+    func testExactMinutePickerAndTimeLocks() throws {
+        let app = XCUIApplication()
+        app.launch()
+        if app.alerts.firstMatch.waitForExistence(timeout: 2) {
+            let deny = app.alerts.buttons["Don’t Allow"]
+            if deny.exists { deny.tap() }
+        }
+
+        let bedtime = app.buttons["Edit bedtime"]
+        XCTAssertTrue(bedtime.waitForExistence(timeout: 5))
+        bedtime.tap()
+        let minuteWheel = app.pickerWheels.element(boundBy: 1)
+        XCTAssertTrue(minuteWheel.waitForExistence(timeout: 5))
+        minuteWheel.adjust(toPickerWheelValue: "37")
+        app.buttons["Done"].tap()
+        XCTAssertTrue((bedtime.value as? String)?.contains(":37") == true)
+
+        let bedtimeLock = app.buttons["Fix bedtime"]
+        XCTAssertTrue(bedtimeLock.isHittable)
+        XCTAssertEqual(app.scrollViews.count, 0)
+        bedtimeLock.tap()
+        XCTAssertEqual(bedtimeLock.value as? String, "Locked")
+        let alarmLock = app.buttons["Fix alarm"]
+        alarmLock.tap()
+        XCTAssertEqual(alarmLock.value as? String, "Locked")
+        XCTAssertTrue(app.staticTexts["These times don’t fit whole REM cycles, including your fall-asleep buffer."]
+            .waitForExistence(timeout: 3))
+        XCTAssertTrue((bedtime.value as? String)?.contains(":37") == true)
+        XCTAssertTrue(app.buttons["Sleep Now"].isHittable)
+        XCTAssertTrue(app.buttons["Create Alarm"].isHittable || app.buttons["Delete Alarm"].isHittable)
+        attach(app, name: "exact-times-locked-with-warning")
+    }
+
+    @MainActor
+    func testFixedHandlesRemainDirectlyDraggable() throws {
+        let app = XCUIApplication()
+        app.launch()
+        if app.alerts.firstMatch.waitForExistence(timeout: 2) {
+            let deny = app.alerts.buttons["Don’t Allow"]
+            if deny.exists { deny.tap() }
+        }
+        app.buttons["Fix bedtime"].tap()
+        app.buttons["Fix alarm"].tap()
+        let bedtime = app.buttons["Edit bedtime"]
+        let alarm = app.buttons["Edit alarm time"]
+        let originalBedtime = bedtime.value as? String
+        let originalAlarm = alarm.value as? String
+
+        func dragTime(from minutes: Int, to targetMinutes: Int) {
+            let dial = app.otherElements["sleepDial"]
+            let radius = min(dial.frame.width, dial.frame.height) / 2 - 9
+            let center = dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            func point(_ time: Int) -> XCUICoordinate {
+                let angle = Double(time) / 1440 * 2 * .pi - .pi / 2
+                return center.withOffset(CGVector(dx: cos(angle) * radius, dy: sin(angle) * radius))
+            }
+            point(minutes).press(forDuration: 0.15, thenDragTo: point(targetMinutes))
+        }
+
+        dragTime(from: 22 * 60 + 30, to: 21 * 60 + 30)
+        let changedBedtime = bedtime.value as? String
+        XCTAssertNotEqual(changedBedtime, originalBedtime)
+        XCTAssertEqual(alarm.value as? String, originalAlarm)
+        dragTime(from: 7 * 60 + 45, to: 6 * 60 + 45)
+        XCTAssertNotEqual(alarm.value as? String, originalAlarm)
+        XCTAssertEqual(bedtime.value as? String, changedBedtime)
+        XCTAssertEqual(app.buttons["Fix bedtime"].value as? String, "Locked")
+        XCTAssertEqual(app.buttons["Fix alarm"].value as? String, "Locked")
     }
 
     @MainActor

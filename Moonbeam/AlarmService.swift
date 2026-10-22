@@ -20,6 +20,14 @@ struct ScheduledAlarm: Identifiable, Codable, Equatable {
     let fireDate: Date
     /// Identifier of the bedtime reminder notification paired with this alarm.
     let reminderID: String?
+
+    static func forTomorrow(_ alarms: [ScheduledAlarm], relativeTo now: Date = Date(),
+                            calendar: Calendar = .current) -> [ScheduledAlarm] {
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
+              let interval = calendar.dateInterval(of: .day, for: tomorrow) else { return [] }
+        return alarms.filter { $0.fireDate >= interval.start && $0.fireDate < interval.end }
+            .sorted { $0.fireDate < $1.fireDate }
+    }
 }
 
 @MainActor
@@ -82,8 +90,8 @@ final class AlarmService: ObservableObject {
 
     // MARK: - Single Sleep Alarm (home screen)
 
-    func scheduleSleepAlarm(bedMinutes: Int, wakeMinutes: Int, label: String = "Moonbeam") async {
-        guard await ensureAuthorized() else { return }
+    func scheduleSleepAlarm(bedMinutes: Int, wakeMinutes: Int, label: String = "Moonbeam") async -> Result<Void, Error> {
+        guard await ensureAuthorized() else { return .failure(AlarmSchedulingError.notAuthorized) }
 
         cancelMoonbeamAlarms()
 
@@ -91,7 +99,12 @@ final class AlarmService: ObservableObject {
         let wakeDate = nextOccurrence(minutesSinceMidnight: wakeMinutes, after: bedDate)
 
         await scheduleBedtimeReminder(at: bedDate, body: "Your \(label) bedtime is now. Sweet dreams!", id: "moonbeam.bedtime")
-        try? await scheduleWakeAlarm(at: wakeDate, title: "Wake Up — \(label)", reminderID: "moonbeam.bedtime")
+        do {
+            try await scheduleWakeAlarm(at: wakeDate, title: "Wake Up — \(label)", reminderID: "moonbeam.bedtime")
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
     }
 
     // MARK: - Jet Lag Plan Alarms
@@ -199,7 +212,11 @@ final class AlarmService: ObservableObject {
 
     /// Turns off a single wake alarm and its paired bedtime reminder.
     func cancelAlarm(id: UUID) {
-        try? AlarmManager.shared.cancel(id: id)
+        try? deleteAlarm(id: id)
+    }
+
+    func deleteAlarm(id: UUID) throws {
+        try AlarmManager.shared.cancel(id: id)
         if let reminderID = scheduledAlarms.first(where: { $0.id == id })?.reminderID {
             UNUserNotificationCenter.current()
                 .removePendingNotificationRequests(withIdentifiers: [reminderID])
@@ -241,6 +258,13 @@ final class AlarmService: ObservableObject {
         if pruned != scheduledAlarms {
             scheduledAlarms = pruned
             saveRecords()
+        }
+    }
+
+    func observeAlarmChanges() async {
+        for await _ in AlarmManager.shared.alarmUpdates {
+            guard !Task.isCancelled else { return }
+            refreshScheduledAlarms()
         }
     }
 
