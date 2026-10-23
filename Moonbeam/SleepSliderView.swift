@@ -25,6 +25,7 @@ struct SleepSliderView: View {
     @State private var usesExactTimes = false
     @State private var bedtimeLocked = false
     @State private var alarmLocked = false
+    @State private var wakeByMinutes: Int?
 
     init(
         publishedBedMinutes: Binding<Int>,
@@ -57,7 +58,7 @@ struct SleepSliderView: View {
     @State private var lastDragged: HandleType = .bed
 
     private let ringWidth: CGFloat = 34
-    private let dialPadding: CGFloat = 36
+    private let dialPadding: CGFloat = 18
     private let handleSize: CGFloat = 44
 
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
@@ -68,7 +69,13 @@ struct SleepSliderView: View {
     }
 
     private var selectedTimes: SleepCalculator.DialTimes {
-        SleepCalculator.dialTimes(
+        if let deadline = wakeByMinutes {
+            return SleepCalculator.wakeByTimes(
+                bedMinutes: SleepCalculator.minutesSinceMidnight(from: bedAngle),
+                deadlineMinutes: deadline, cycleMinutes: profile.remCycleMinutes,
+                fallAsleepMinutes: profile.fallAsleepMinutes)
+        }
+        return SleepCalculator.dialTimes(
             bedMinutes: SleepCalculator.minutesSinceMidnight(from: bedAngle),
             wakeMinutes: SleepCalculator.minutesSinceMidnight(from: wakeAngle),
             cycleMinutes: profile.remCycleMinutes,
@@ -91,15 +98,15 @@ struct SleepSliderView: View {
     }
 
     private var displayBedAngle: Double {
-        Double(selectedTimes.bedMinutes) / 1440 * 2 * .pi
+        SleepCalculator.continuousAngle(Double(selectedTimes.bedMinutes) / 1440 * 2 * .pi, near: bedAngle)
     }
 
     private var displayWakeAngle: Double {
-        Double(selectedTimes.wakeMinutes) / 1440 * 2 * .pi
+        SleepCalculator.continuousAngle(Double(selectedTimes.wakeMinutes) / 1440 * 2 * .pi, near: wakeAngle)
     }
 
     private var hasCycleMismatch: Bool {
-        bedtimeLocked && alarmLocked && !selectedTimes.fitsCycles(
+        ((bedtimeLocked && alarmLocked) || wakeByMinutes != nil) && !selectedTimes.fitsCycles(
             cycleMinutes: profile.remCycleMinutes, fallAsleepMinutes: profile.fallAsleepMinutes)
     }
 
@@ -137,18 +144,11 @@ struct SleepSliderView: View {
                 .font(.caption.weight(.semibold))
                 .buttonStyle(.glass)
                 .controlSize(.small)
+                .offset(y: 10)
                 Spacer(minLength: 0)
                 locationButton
             }
             .fixedSize(horizontal: false, vertical: true)
-            if hasCycleMismatch {
-                Label("These times don’t fit whole REM cycles, including your fall-asleep buffer.",
-                      systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange.opacity(0.85))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
         }
         .onAppear { publishTimes() }
         .onChange(of: displayBedMinutes) { publishTimes() }
@@ -156,12 +156,12 @@ struct SleepSliderView: View {
         .onChange(of: sleepNowTrigger) { sleepNow() }
         .sheet(item: $editingTime) { handle in
             NavigationStack {
-                DatePicker(handle == .bed ? "Bedtime" : "Alarm time", selection: $pickerDate,
+                DatePicker(handle == .bed ? "Bedtime" : (wakeByMinutes != nil ? "Wake by time" : "Alarm time"), selection: $pickerDate,
                            displayedComponents: .hourAndMinute)
                     .datePickerStyle(.wheel)
                     .labelsHidden()
                     .padding()
-                    .navigationTitle(handle == .bed ? "Set Bedtime" : "Set Alarm Time")
+                    .navigationTitle(handle == .bed ? "Set Bedtime" : (wakeByMinutes != nil ? "Set Wake By Time" : "Set Alarm Time"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -194,7 +194,8 @@ struct SleepSliderView: View {
         usesExactTimes = false
     }
 
-    private func timeLock(_ title: String, isLocked: Bool, handle: HandleType) -> some View {
+    private func timeLock(_ title: String, isLocked: Bool, handle: HandleType,
+                          minHeight: CGFloat = 44) -> some View {
         Button {
             captureDisplayedTimes()
             usesExactTimes = true
@@ -202,13 +203,14 @@ struct SleepSliderView: View {
                 bedtimeLocked.toggle()
             } else {
                 alarmLocked.toggle()
+                if alarmLocked { wakeByMinutes = nil }
             }
             haptic.impactOccurred()
         } label: {
             Label(title, systemImage: isLocked ? "checkmark.square.fill" : "square")
                 .font(.caption)
                 .foregroundStyle(isLocked ? .white : .white.opacity(0.6))
-                .frame(minHeight: 44, alignment: .leading)
+                .frame(minHeight: minHeight, alignment: .leading)
         }
         .buttonStyle(.plain)
         .accessibilityValue(isLocked ? "Locked" : "Unlocked")
@@ -216,10 +218,36 @@ struct SleepSliderView: View {
         .accessibilityAddTraits(isLocked ? .isSelected : [])
     }
 
+    private var wakeByToggle: some View {
+        Button {
+            captureDisplayedTimes()
+            if wakeByMinutes == nil {
+                wakeByMinutes = displayWakeMinutes
+                alarmLocked = false
+            } else {
+                wakeByMinutes = nil
+                usesExactTimes = true
+            }
+            haptic.impactOccurred()
+        } label: {
+            Label("Wake By Mode", systemImage: wakeByMinutes != nil ? "checkmark.square.fill" : "square")
+                .font(.caption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .foregroundStyle(wakeByMinutes != nil ? .white : .white.opacity(0.6))
+                .frame(minHeight: 22)
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(wakeByMinutes.map { SleepCalculator.formattedTime(minutesSinceMidnight: $0) } ?? "Off")
+        .accessibilityHint("Allows an earlier alarm to complete a REM cycle. Drag or edit the alarm to change the deadline.")
+        .accessibilityAddTraits(wakeByMinutes != nil ? .isSelected : [])
+    }
+
     private func timeValueButton(_ handle: HandleType) -> some View {
-        let minutes = handle == .bed ? displayBedMinutes : displayWakeMinutes
+        let minutes = handle == .bed ? displayBedMinutes : (wakeByMinutes ?? displayWakeMinutes)
         return Button {
-            pickerDate = SleepCalculator.date(fromMinutes: minutes, relativeTo: Date())
+            let editMinutes = handle == .wake ? (wakeByMinutes ?? minutes) : minutes
+            pickerDate = SleepCalculator.date(fromMinutes: editMinutes, relativeTo: Date())
             editingTime = handle
         } label: {
             Text(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
@@ -229,7 +257,7 @@ struct SleepSliderView: View {
                 .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(handle == .bed ? "Edit bedtime" : "Edit alarm time")
+        .accessibilityLabel(handle == .bed ? "Edit bedtime" : (wakeByMinutes != nil ? "Edit wake by time" : "Edit alarm time"))
         .accessibilityValue(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
         .accessibilityHint("Choose an exact time to the minute")
     }
@@ -240,7 +268,12 @@ struct SleepSliderView: View {
         let minutes = calendar.component(.hour, from: pickerDate) * 60 + calendar.component(.minute, from: pickerDate)
         let angle = Double(minutes) / 1440 * 2 * .pi
         usesExactTimes = true
-        if handle == .bed { bedAngle = angle } else { wakeAngle = angle }
+        if handle == .bed {
+            bedAngle = SleepCalculator.continuousAngle(angle, near: bedAngle)
+        } else {
+            wakeAngle = SleepCalculator.continuousAngle(angle, near: wakeAngle)
+            if wakeByMinutes != nil { wakeByMinutes = minutes }
+        }
         publishTimes()
     }
 
@@ -378,19 +411,23 @@ struct SleepSliderView: View {
                 Text(displayBedMinutes >= 720 ? "Tonight" : "Tomorrow")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                timeLock("Fix bedtime", isLocked: bedtimeLocked, handle: .bed)
+                timeLock("Fix Bedtime", isLocked: bedtimeLocked, handle: .bed, minHeight: 22)
+                    .frame(height: 44, alignment: .top)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Color.clear.frame(width: 112, height: 1)
             VStack(alignment: .trailing, spacing: 4) {
-                Label("WAKE UP", systemImage: "alarm.fill")
+                Label(wakeByMinutes != nil ? "WAKE BY" : "WAKE UP", systemImage: "alarm.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 timeValueButton(.wake)
-                Text(displayWakeMinutes < 720 ? "Tomorrow" : "Today")
+                Text((wakeByMinutes ?? displayWakeMinutes) < 720 ? "Tomorrow" : "Today")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                timeLock("Fix alarm", isLocked: alarmLocked, handle: .wake)
+                VStack(alignment: .trailing, spacing: 0) {
+                    wakeByToggle
+                    timeLock("Fix Alarm", isLocked: alarmLocked, handle: .wake, minHeight: 22)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -425,6 +462,13 @@ struct SleepSliderView: View {
                                 .stroke(Color.white.opacity(0.15), lineWidth: 1)
                         )
                 )
+            Label("Incomplete REM", systemImage: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .opacity(hasCycleMismatch ? 1 : 0)
+                .accessibilityHidden(!hasCycleMismatch)
         }
         .contentTransition(.numericText())
     }
@@ -485,11 +529,6 @@ struct SleepSliderView: View {
                 // REM segment dividers
                 remSegmentDividers(center: center, radius: midRadius)
 
-                if fallAsleepBufferMinutes > 0 {
-                    fallAsleepBox(center: center, radius: midRadius)
-                        .allowsHitTesting(false)
-                }
-
                 // Invisible arc hit target for whole-arc dragging
                 arcHitTarget(center: center, radius: midRadius)
                     .gesture(arcDragGesture(center: center))
@@ -506,13 +545,18 @@ struct SleepSliderView: View {
 
                 // Wake handle
                 handleView(
-                    angle: displayWakeAngle,
+                    angle: wakeByMinutes.map { Double($0) / 1440 * 2 * .pi } ?? displayWakeAngle,
                     center: center,
                     radius: midRadius,
                     icon: "alarm.fill",
                     isDragging: isDraggingWake
                 )
                 .gesture(dragGesture(for: .wake, center: center))
+
+                if wakeByMinutes != nil {
+                    wakeByMarker(minutes: displayWakeMinutes, center: center, radius: midRadius)
+                        .allowsHitTesting(false)
+                }
             }
             .frame(width: size, height: size)
             .accessibilityElement(children: .contain)
@@ -690,6 +734,19 @@ struct SleepSliderView: View {
         let trimEnd = CGFloat(totalSleepMinutes) / 1440
 
         return ZStack {
+            // Bridge the fall-asleep gap along both rims without filling it in.
+            if fallAsleepBufferMinutes > 0 {
+                ForEach([-1.0, 1.0], id: \.self) { edge in
+                    let edgeRadius = radius + CGFloat(edge) * (ringWidth / 2 - 1)
+                    Circle()
+                        .trim(from: 0, to: CGFloat(fallAsleepBufferMinutes) / 1440)
+                        .stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .frame(width: edgeRadius * 2, height: edgeRadius * 2)
+                        .rotationEffect(.radians(displayBedAngle - .pi / 2))
+                        .position(center)
+                }
+            }
+
             // Soft glow behind — single continuous arc
             Circle()
                 .trim(from: 0, to: trimEnd)
@@ -744,30 +801,9 @@ struct SleepSliderView: View {
 
     // MARK: - Arc Hit Target
 
-    /// A hollow capsule with semicircular short ends, aligned radially with the buffer.
-    private func fallAsleepBox(center: CGPoint, radius: CGFloat) -> some View {
-        let span = Double(fallAsleepBufferMinutes) / 1440 * 2 * .pi
-        let midpoint = displayBedAngle + span / 2 - .pi / 2
-        let capsuleRadius = radius + 5
-        let width = max(8, capsuleRadius * CGFloat(span))
-
-        return Capsule()
-            .fill(Color("DeepSpace"))
-            .overlay(Capsule().stroke(.white.opacity(0.65), lineWidth: 1.5))
-            .frame(width: width, height: ringWidth + 10)
-            .rotationEffect(.radians(midpoint + .pi / 2))
-            .position(x: center.x + cos(midpoint) * capsuleRadius,
-                      y: center.y + sin(midpoint) * capsuleRadius)
-            .accessibilityLabel("Fall-asleep buffer")
-            .accessibilityValue("\(fallAsleepBufferMinutes) minutes")
-    }
-
     private func arcHitTarget(center: CGPoint, radius: CGFloat) -> some View {
         let startSwiftUI = displayBedAngle - .pi / 2
-        let endSwiftUI = displayWakeAngle - .pi / 2
-        var arcSpan = endSwiftUI - startSwiftUI
-        if arcSpan <= 0 { arcSpan += 2 * .pi }
-        let trimEnd = CGFloat(arcSpan / (2 * .pi))
+        let trimEnd = CGFloat(selectedTimes.durationMinutes) / 1440
 
         return Circle()
             .trim(from: 0, to: trimEnd)
@@ -823,6 +859,37 @@ struct SleepSliderView: View {
 
     // MARK: - Handle
 
+    private func wakeByMarker(minutes: Int, center: CGPoint, radius: CGFloat) -> some View {
+        let angle = Double(minutes) / 1440 * 2 * .pi - .pi / 2
+        let start = radius + ringWidth / 2 + 10
+        let end = start + 11
+        let iconRadius = end + 14
+        return ZStack {
+            Path { path in
+                path.move(to: CGPoint(x: center.x + cos(angle) * start,
+                                     y: center.y + sin(angle) * start))
+                path.addLine(to: CGPoint(x: center.x + cos(angle) * end,
+                                        y: center.y + sin(angle) * end))
+            }
+            .stroke(.orange.opacity(0.85), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            Image(systemName: "alarm.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.orange.opacity(0.85))
+                .overlay(alignment: .top) {
+                    Text(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
+                        .font(.caption2.weight(.medium).monospacedDigit())
+                        .foregroundStyle(.orange.opacity(0.85))
+                        .fixedSize()
+                        .offset(y: -18)
+                }
+                .position(x: center.x + cos(angle) * iconRadius,
+                          y: center.y + sin(angle) * iconRadius)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Actual alarm")
+        .accessibilityValue(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
+    }
+
     private func handleView(angle: Double, center: CGPoint, radius: CGFloat, icon: String, isDragging: Bool) -> some View {
         let isFixed = icon == "bed.double.fill" ? bedtimeLocked : alarmLocked
         let swAngle = angle - .pi / 2
@@ -858,6 +925,7 @@ struct SleepSliderView: View {
                 .frame(width: handleSize, height: handleSize)
                 .contentShape(Circle())
                 .scaleEffect(isDragging ? 1.15 : 1.0)
+                .opacity(icon == "alarm.fill" && wakeByMinutes != nil ? 0 : 1)
                 .position(x: center.x + cos(swAngle) * iconRadius,
                           y: center.y + sin(swAngle) * iconRadius)
         }
@@ -868,7 +936,9 @@ struct SleepSliderView: View {
         .accessibilityValue(SleepCalculator.formattedTime(
             minutesSinceMidnight: SleepCalculator.minutesSinceMidnight(from: angle))
             + (isFixed ? ", fixed" : ""))
-        .accessibilityHint("Drag to change this time")
+        .accessibilityHint(icon == "alarm.fill" && wakeByMinutes != nil
+                           ? "Drag the white bar to change your wake-by deadline"
+                           : "Drag to change this time")
 
     }
 
@@ -891,11 +961,12 @@ struct SleepSliderView: View {
                 case .bed:
                     isDraggingBed = true
                     lastDragged = .bed
-                    bedAngle = snappedAngle
+                    bedAngle = SleepCalculator.continuousAngle(snappedAngle, near: bedAngle)
                 case .wake:
                     isDraggingWake = true
                     lastDragged = .wake
-                    wakeAngle = snappedAngle
+                    wakeAngle = SleepCalculator.continuousAngle(snappedAngle, near: wakeAngle)
+                    if wakeByMinutes != nil { wakeByMinutes = snappedMins }
                 }
 
                 let newCycles = cycleCount
@@ -939,13 +1010,11 @@ struct SleepSliderView: View {
                 if delta < -.pi { delta += 2 * .pi }
 
                 if !bedtimeLocked {
-                    bedAngle = (bedAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                    bedAngle += delta
                 }
-                if !alarmLocked {
-                    wakeAngle = (wakeAngle + delta).truncatingRemainder(dividingBy: 2 * .pi)
+                if !alarmLocked && wakeByMinutes == nil {
+                    wakeAngle += delta
                 }
-                if bedAngle < 0 { bedAngle += 2 * .pi }
-                if wakeAngle < 0 { wakeAngle += 2 * .pi }
 
                 arcDragPreviousAngle = currentAngle
             }
@@ -959,10 +1028,12 @@ struct SleepSliderView: View {
 
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     if !bedtimeLocked {
-                        bedAngle = Double(snappedBedMins % 1440) / 1440.0 * 2.0 * .pi
+                        bedAngle = SleepCalculator.continuousAngle(
+                            Double(snappedBedMins % 1440) / 1440 * 2 * .pi, near: bedAngle)
                     }
-                    if !alarmLocked {
-                        wakeAngle = Double(snappedWakeMins % 1440) / 1440.0 * 2.0 * .pi
+                    if !alarmLocked && wakeByMinutes == nil {
+                        wakeAngle = SleepCalculator.continuousAngle(
+                            Double(snappedWakeMins % 1440) / 1440 * 2 * .pi, near: wakeAngle)
                     }
                     captureDisplayedTimes()
                 }
@@ -974,15 +1045,17 @@ struct SleepSliderView: View {
     private func sleepNow() {
         beginCycleDrag()
         lastDragged = .bed
+        // An exact alarm must not pull "now" onto an earlier cycle boundary.
+        usesExactTimes = alarmLocked
         let now = Date()
         let cal = Calendar.current
         let hour = cal.component(.hour, from: now)
         let minute = cal.component(.minute, from: now)
         let nowMinutes = hour * 60 + minute
-        let snappedMins = (nowMinutes / 15) * 15
 
         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-            bedAngle = Double(snappedMins) / 1440.0 * 2.0 * .pi
+            bedAngle = SleepCalculator.continuousAngle(
+                Double(nowMinutes) / 1440 * 2 * .pi, near: bedAngle)
         }
         haptic.impactOccurred()
     }

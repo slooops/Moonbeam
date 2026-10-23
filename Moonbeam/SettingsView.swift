@@ -18,6 +18,14 @@ struct SettingsView: View {
                     sleepProfileSection
                     alarmSection
                     homeKitSection
+                    comingSoonSection(
+                        "Sleep Debt Tracker", icon: "chart.line.uptrend.xyaxis",
+                        description: "Track your accumulated sleep debt and monitor your health."
+                    )
+                    comingSoonSection(
+                        "Wearables Integration", icon: "applewatch",
+                        description: "Work with your smartwatch or Oura Ring."
+                    )
                     aboutSection
                 }
                 .padding()
@@ -176,20 +184,25 @@ struct SettingsView: View {
     // MARK: - HomeKit
 
     private var homeKitSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("HomeKit Light Alarm", systemImage: "lightbulb.fill")
-                .font(.headline)
+        comingSoonSection(
+            "HomeKit Light Alarm", icon: "lightbulb.fill",
+            description: "HomeKit integration for light-based wake-up alarms. Gradually brighten your lights at wake time."
+        )
+    }
 
+    private func comingSoonSection(_ title: String, icon: String, description: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: icon)
+                .font(.headline)
             HStack(spacing: 10) {
                 Image(systemName: "sparkles")
                     .font(.title2)
                     .foregroundStyle(.white.opacity(0.3))
-
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Coming Soon")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.6))
-                    Text("HomeKit integration for light-based wake-up alarms. Gradually brighten your lights at wake time.")
+                    Text(description)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }

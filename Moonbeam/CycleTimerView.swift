@@ -51,7 +51,7 @@ struct CycleTimerView: View {
                         }
                     }
                     .moonbeamCard()
-                    .frame(maxHeight: min(geometry.size.width + 170, geometry.size.height * 0.79))
+                    .frame(maxHeight: min(geometry.size.width + 170, geometry.size.height * 0.79) - 36)
 
                     tomorrowAlarms
                     Spacer(minLength: 0)

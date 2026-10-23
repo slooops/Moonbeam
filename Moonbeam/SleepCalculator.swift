@@ -39,7 +39,26 @@ enum SleepCalculator {
         return DialTimes(bedMinutes: (wakeMinutes - duration + 1440) % 1440, wakeMinutes: wakeMinutes)
     }
 
+    /// Choose the latest complete cycle ending at or before the wake deadline.
+    /// If even one cycle cannot fit, preserve the requested window so the UI can warn.
+    static func wakeByTimes(bedMinutes: Int, deadlineMinutes: Int, cycleMinutes: Int,
+                            fallAsleepMinutes: Int) -> DialTimes {
+        let window = DialTimes(bedMinutes: bedMinutes, wakeMinutes: deadlineMinutes)
+        guard cycleMinutes > 0 else { return window }
+        let buffer = max(0, fallAsleepMinutes)
+        let cycles = (window.durationMinutes - buffer) / cycleMinutes
+        guard cycles >= 1 else { return window }
+        let duration = buffer + cycles * cycleMinutes
+        return DialTimes(bedMinutes: bedMinutes, wakeMinutes: (bedMinutes + duration) % 1440)
+    }
+
     // MARK: - Angle ↔ Time (24-hour clock face)
+
+    /// Keep equivalent clock positions on the nearest turn for smooth animation at midnight.
+    static func continuousAngle(_ angle: Double, near reference: Double) -> Double {
+        let turn = 2 * Double.pi
+        return angle + ((reference - angle) / turn).rounded() * turn
+    }
     // 12 AM at top (0°/360°), 6 AM at right (90°), 12 PM at bottom (180°), 6 PM at left (270°)
 
     /// Convert a Date's time-of-day into an angle on the 24-hour dial (in radians).

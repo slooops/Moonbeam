@@ -11,6 +11,50 @@ import Testing
 
 struct MoonbeamTests {
 
+    @Test func clockAnglesCrossMidnightOnTheNearestTurn() {
+        for direction in [-1.0, 1.0] {
+            var angle = direction > 0 ? 23.75 / 24 * 2 * Double.pi : 0.25 / 24 * 2 * Double.pi
+            for _ in 0..<200 {
+                let expected = angle + direction * 0.25 / 24 * 2 * Double.pi
+                let clockMinutes = SleepCalculator.minutesSinceMidnight(from: expected)
+                let normalized = Double(clockMinutes) / 1440 * 2 * Double.pi
+                let next = SleepCalculator.continuousAngle(normalized, near: angle)
+                #expect(abs(next - expected) < 0.000001)
+                #expect(SleepCalculator.minutesSinceMidnight(from: next) == clockMinutes)
+                angle = next
+            }
+        }
+    }
+
+    @Test func wakeByOnlyMovesEarlierAndKeepsBedtime() {
+        let bedtime = 22 * 60 + 37
+        for deadline in 0..<1440 {
+            let window = SleepCalculator.DialTimes(bedMinutes: bedtime, wakeMinutes: deadline)
+            let times = SleepCalculator.wakeByTimes(
+                bedMinutes: bedtime, deadlineMinutes: deadline,
+                cycleMinutes: 90, fallAsleepMinutes: 15)
+            #expect(times.bedMinutes == bedtime)
+            #expect(times.durationMinutes <= window.durationMinutes)
+            if window.sleepMinutes(fallAsleepMinutes: 15) >= 90 {
+                #expect(times.fitsCycles(cycleMinutes: 90, fallAsleepMinutes: 15))
+                #expect(window.durationMinutes - times.durationMinutes < 90)
+            } else {
+                #expect(times == window)
+            }
+        }
+    }
+
+    @Test func wakeByHonorsExactMinutesAndAlreadyCompleteCycles() {
+        let times = SleepCalculator.wakeByTimes(
+            bedMinutes: 22 * 60 + 37, deadlineMinutes: 7 * 60 + 13,
+            cycleMinutes: 90, fallAsleepMinutes: 15)
+        #expect(times.wakeMinutes == 6 * 60 + 22)
+        let complete = SleepCalculator.wakeByTimes(
+            bedMinutes: 22 * 60 + 37, deadlineMinutes: 7 * 60 + 52,
+            cycleMinutes: 90, fallAsleepMinutes: 15)
+        #expect(complete.wakeMinutes == 7 * 60 + 52)
+    }
+
     @Test func displayedSleepExcludesFallAsleepBuffer() {
         let window = SleepCalculator.DialTimes(bedMinutes: 22 * 60 + 30, wakeMinutes: 7 * 60 + 45)
         #expect(window.durationMinutes == 555)
