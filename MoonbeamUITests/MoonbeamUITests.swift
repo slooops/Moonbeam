@@ -14,6 +14,38 @@ final class MoonbeamUITests: XCTestCase {
     }
 
     @MainActor
+    func testAddingAndRemovingConnectingFlights() throws {
+        let app = XCUIApplication()
+        app.launch()
+        app.tabBars.buttons["Jet Lag"].tap()
+
+        func addFlight() {
+            let button = app.buttons["addFlight"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            for _ in 0..<4 where !button.isHittable { app.swipeUp() }
+            XCTAssertTrue(button.isHittable)
+            button.tap()
+        }
+
+        addFlight()
+        XCTAssertTrue(app.textFields["flightNumber-1"].waitForExistence(timeout: 3))
+        addFlight()
+        XCTAssertTrue(app.textFields["flightNumber-2"].waitForExistence(timeout: 3))
+        addFlight()
+        XCTAssertTrue(app.textFields["flightNumber-3"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["addFlight"].exists)
+        attach(app, name: "three-flight-entries")
+
+        let removeSecond = app.buttons["Remove flight 2"]
+        for _ in 0..<4 where !removeSecond.isHittable { app.swipeDown() }
+        XCTAssertTrue(removeSecond.isHittable)
+        removeSecond.tap()
+        XCTAssertFalse(app.textFields["flightNumber-3"].exists)
+        addFlight()
+        XCTAssertTrue(app.textFields["flightNumber-3"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testJetLagPlanFlow() throws {
         let app = XCUIApplication()
         app.launch()

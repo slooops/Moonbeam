@@ -121,25 +121,25 @@ final class AlarmService: ObservableObject {
         let now = Date()
         var scheduledAny = false
 
-        for night in plan.nights {
-            guard night.wakeDate > now else { continue }
+        for event in plan.alarmEvents {
+            guard event.wakeTime > now else { continue }
 
-            let reminderID = "moonbeam.jetlag.bedtime.\(night.nightIndex)"
+            let reminderID = "moonbeam.jetlag.bedtime.\(event.id)"
 
             do {
                 try await scheduleWakeAlarm(
-                    at: night.wakeDate,
-                    title: "Night \(night.nightIndex + 1) Wake-Up · \(plan.destinationCity)",
+                    at: event.wakeTime,
+                    title: "\(event.title) Wake-Up",
                     reminderID: reminderID
                 )
             } catch {
                 return .failure(error)
             }
 
-            if night.bedDate > now {
+            if event.bedtime > now {
                 await scheduleBedtimeReminder(
-                    at: night.bedDate,
-                    body: "Night \(night.nightIndex + 1) of your \(plan.destinationCity) transition. Bedtime is now.",
+                    at: event.bedtime,
+                    body: "\(event.title). Your planned sleep window starts now.",
                     id: reminderID
                 )
             }

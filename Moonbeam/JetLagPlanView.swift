@@ -6,20 +6,25 @@
 import SwiftUI
 
 struct JetLagPlanView: View {
+    @EnvironmentObject private var tripStore: JetLagTripStore
     @State private var plan: JetLagPlan
+    @State private var showingSaveConfirmation = false
+    @State private var saveError: String?
     @State private var alarmsSet = false
     @State private var alarmError: String?
 
     private let barHeight: CGFloat = 40   // gradient boxes, same as dial ringWidth
     private let sleepBarHeight: CGFloat = 30
 
-    /// All bars run noon → noon instead of midnight → midnight, so sleep
-    /// windows (which cluster around night) stay inside their bar instead of
-    /// wrapping at the edges.
+    /// Airport timelines show two days; sleep rows show one noon-to-noon day.
     private static let axisStartMinute = 720
+    private static let axisDurationMinutes = 2880
 
-    private static func axisFraction(_ minutes: Int) -> CGFloat {
-        CGFloat(((minutes - axisStartMinute) % 1440 + 1440) % 1440) / 1440.0
+    private static let sleepAxisDurationMinutes = 1440
+
+    private static func sleepAxisFraction(_ minutes: Int) -> CGFloat {
+        CGFloat(((minutes - axisStartMinute) % 1440 + 1440) % 1440)
+            / CGFloat(sleepAxisDurationMinutes)
     }
 
     init(plan: JetLagPlan) {
@@ -34,23 +39,9 @@ struct JetLagPlanView: View {
                 VStack(spacing: 16) {
                     headerSection
 
-                    gradientCard(
-                        title: plan.originName,
-                        subtitle: "Origin · your local time",
-                        icon: "airplane.departure",
-                        sunriseMinutes: plan.originSunriseMinutes,
-                        sunsetMinutes: plan.originSunsetMinutes
-                    )
+                    airportSection
 
                     nightsSection
-
-                    gradientCard(
-                        title: plan.destinationCity,
-                        subtitle: destinationSubtitle,
-                        icon: "airplane.arrival",
-                        sunriseMinutes: plan.destSunriseLocalMinutes,
-                        sunsetMinutes: plan.destSunsetLocalMinutes
-                    )
 
                     timezoneAndAlarmSection
                 }
@@ -59,18 +50,37 @@ struct JetLagPlanView: View {
         }
         .navigationTitle("Transition Plan")
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private var destinationSubtitle: String {
-        let sr = SleepCalculator.formattedTime(minutesSinceMidnight: plan.destSunriseMinutes)
-        let ss = SleepCalculator.formattedTime(minutesSinceMidnight: plan.destSunsetMinutes)
-        return "Destination's Daylight Hours: \(sr)–\(ss)"
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save Plan") {
+                    do {
+                        try tripStore.savePlan(plan)
+                        showingSaveConfirmation = true
+                    } catch {
+                        saveError = error.localizedDescription
+                    }
+                }
+            }
+        }
+        .alert("Plan Saved", isPresented: $showingSaveConfirmation) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Your plan is available under Saved Plans in Jet Lag.")
+        }
+        .alert("Unable to Save Plan", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
+        }
     }
 
     // MARK: - Header
 
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("\(plan.nights.count)-Night Plan", systemImage: "bed.double.circle")
                     .font(.title3.weight(.semibold))
@@ -80,10 +90,6 @@ struct JetLagPlanView: View {
 
                 nightStepper
             }
-
-            Text("Gradually shift your sleep to match **\(plan.destinationCity)** time, starting tonight.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .moonbeamCard()
@@ -123,27 +129,61 @@ struct JetLagPlanView: View {
 
     // MARK: - Gradient Cards (origin / destination day-night cycle)
 
-    private func gradientCard(title: String, subtitle: String, icon: String, sunriseMinutes: Int, sunsetMinutes: Int) -> some View {
+    private var airportSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(title, systemImage: icon)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Label(plan.originName, systemImage: "airplane.departure")
+                .font(.subheadline.weight(.semibold))
 
-            RoundedRectangle(cornerRadius: barHeight / 2)
-                .fill(Self.skyGradient(sunriseMinutes: sunriseMinutes, sunsetMinutes: sunsetMinutes))
-                .frame(height: barHeight)
+            gradientBar(
+                sunriseMinutes: plan.originSunriseMinutes,
+                sunsetMinutes: plan.originSunsetMinutes
+            )
 
             timeAxisLabels
+
+            gradientBar(
+                sunriseMinutes: plan.destSunriseLocalMinutes,
+                sunsetMinutes: plan.destSunsetLocalMinutes
+            )
+
+            Label(plan.destinationCity, systemImage: "airplane.arrival")
+                .font(.subheadline.weight(.semibold))
         }
         .moonbeamCard()
     }
 
+    private func gradientBar(sunriseMinutes: Int, sunsetMinutes: Int) -> some View {
+        RoundedRectangle(cornerRadius: barHeight / 2)
+            .fill(Self.skyGradient(sunriseMinutes: sunriseMinutes, sunsetMinutes: sunsetMinutes))
+            .saturation(0.5)
+            .frame(height: barHeight)
+    }
+
+    private var airportTimeZoneLabel: String {
+        if let flight = plan.flight {
+            return flight.departureTimeZone.abbreviation(for: flight.departure) ?? "Origin time"
+        }
+        return "UTC\(plan.localOffsetHours >= 0 ? "+" : "−")\(abs(plan.localOffsetHours))"
+    }
+
     private var timeAxisLabels: some View {
+        HStack {
+            Text("12PM")
+            Spacer()
+            Text("12AM")
+            Spacer()
+            Text(airportTimeZoneLabel)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("12AM")
+            Spacer()
+            Text("12PM")
+        }
+        .font(.system(size: 9, weight: .medium))
+        .foregroundStyle(.white.opacity(0.35))
+    }
+
+    private var sleepTimeAxisLabels: some View {
         HStack {
             Text("12PM")
             Spacer()
@@ -162,21 +202,99 @@ struct JetLagPlanView: View {
     // MARK: - Night Sleep Bars
 
     private var nightsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(plan.nights) { night in
+        let beforeCount = plan.beforeFlightCount
+        let beforeFlight = Array(plan.nights.prefix(beforeCount))
+        let afterFlight = Array(plan.nights.dropFirst(beforeCount))
+
+        return VStack(alignment: .leading, spacing: 14) {
+            if let flight = plan.flight {
+                flightTimeZoneLabel(name: plan.originName, timeZone: flight.departureTimeZone, date: flight.departure)
+            } else {
+                timeZoneLabel(name: plan.originName, offsetHours: plan.localOffsetHours)
+            }
+
+            Text("Before flight · \(beforeFlight.count) night\(beforeFlight.count == 1 ? "" : "s")")
+                .font(.caption.weight(.semibold))
+            ForEach(beforeFlight) { night in
                 nightRow(night: night)
             }
-            timeAxisLabels
+            sleepTimeAxisLabels
+
+            if let itinerary = plan.flights, !itinerary.isEmpty {
+                VStack(spacing: 12) {
+                    ForEach(Array(itinerary.enumerated()), id: \.element.id) { index, flight in
+                        if index > 0 {
+                            Text("Connection at \(flight.departureAirport) · \(FlightTimelineView.durationLabel(flight.departure.timeIntervalSince(itinerary[index - 1].arrival)))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        FlightTimelineView(flight: flight, sleep: plan.inFlightSleep(for: flight))
+                    }
+                }
+            } else {
+                HStack(spacing: 10) {
+                    dashedFlightLine
+                    Label("Flight", systemImage: "airplane")
+                        .font(.caption.weight(.medium))
+                        .fixedSize()
+                    dashedFlightLine
+                }
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 4)
+            }
+
+            Text("After flight · \(afterFlight.count) night\(afterFlight.count == 1 ? "" : "s")")
+                .font(.caption.weight(.semibold))
+            ForEach(afterFlight) { night in
+                nightRow(night: night, clockOffsetMinutes: plan.tzShiftMinutes)
+            }
+            if !afterFlight.isEmpty {
+                sleepTimeAxisLabels
+            }
+
+            if let flight = plan.flight {
+                flightTimeZoneLabel(name: plan.destinationCity, timeZone: (plan.flights?.last ?? flight).arrivalTimeZone, date: (plan.flights?.last ?? flight).arrival)
+            } else {
+                timeZoneLabel(name: plan.destinationCity, offsetHours: plan.destinationOffsetHours)
+            }
         }
         .moonbeamCard()
     }
 
-    private func nightRow(night: JetLagNightPlan) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private var dashedFlightLine: some View {
+        GeometryReader { geometry in
+            Path { path in
+                path.move(to: .zero)
+                path.addLine(to: CGPoint(x: geometry.size.width, y: 0))
+            }
+            .stroke(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+        }
+        .frame(height: 1)
+    }
+
+    private func flightTimeZoneLabel(name: String, timeZone: TimeZone, date: Date) -> some View {
+        Text("\(name) · \(timeZone.abbreviation(for: date) ?? timeZone.identifier)")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+    }
+
+    private func timeZoneLabel(name: String, offsetHours: Int) -> some View {
+        Text("\(name) · UTC\(offsetHours >= 0 ? "+" : "−")\(abs(offsetHours))")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+    }
+
+    private func nightRow(night: JetLagNightPlan, clockOffsetMinutes: Int = 0) -> some View {
+        let window = JetLagSleepWindow(
+            bedMinutes: night.sleepWindow.bedMinutes + clockOffsetMinutes,
+            wakeMinutes: night.sleepWindow.wakeMinutes + clockOffsetMinutes
+        )
+
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Night \(night.nightIndex + 1)")
                     .font(.caption.weight(.semibold))
-                Text(night.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                Text(nightDateLabel(night))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -188,29 +306,34 @@ struct JetLagPlanView: View {
                     Capsule()
                         .fill(Color.white.opacity(0.05))
 
-                    sleepSegments(window: night.sleepWindow, width: width)
+                    sleepSegments(window: window, width: width)
                 }
             }
             .frame(height: sleepBarHeight)
         }
     }
 
+    private func nightDateLabel(_ night: JetLagNightPlan) -> String {
+        let formatter = DateFormatter()
+        if let flight = plan.flight {
+            formatter.timeZone = night.nightIndex < plan.beforeFlightCount
+                ? flight.departureTimeZone : (plan.flights?.last ?? flight).arrivalTimeZone
+        }
+        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d")
+        return formatter.string(from: night.date)
+    }
+
     @ViewBuilder
     private func sleepSegments(window: JetLagSleepWindow, width: CGFloat) -> some View {
-        let bedFrac = Self.axisFraction(window.bedMinutes)
-        let wakeFrac = Self.axisFraction(window.wakeMinutes)
+        let bedFrac = Self.sleepAxisFraction(window.bedMinutes)
+        let wakeFrac = bedFrac + CGFloat(window.durationMinutes) / CGFloat(Self.sleepAxisDurationMinutes)
         let bedTime = SleepCalculator.formattedTime(minutesSinceMidnight: window.bedMinutes)
         let wakeTime = SleepCalculator.formattedTime(minutesSinceMidnight: window.wakeMinutes)
 
-        if wakeFrac < bedFrac {
-            // Wraps past the bar edge: slice the night arc proportionally so
-            // the warm dusk end stays with bedtime and the blue dawn end with
-            // wake-up.
-            let total = (1.0 - bedFrac) + wakeFrac
-            let split = total > 0 ? Double((1.0 - bedFrac) / total) : 0.5
-
+        if wakeFrac > 1 {
+            let split = Double((1 - bedFrac) / (wakeFrac - bedFrac))
             sleepSegment(
-                startFrac: bedFrac, endFrac: 1.0, width: width,
+                startFrac: bedFrac, endFrac: 1, width: width,
                 gradient: Self.sleepGradient(from: 0, to: split)
             ) {
                 HStack {
@@ -219,7 +342,7 @@ struct JetLagPlanView: View {
                 }
             }
             sleepSegment(
-                startFrac: 0.0, endFrac: wakeFrac, width: width,
+                startFrac: 0, endFrac: wakeFrac - 1, width: width,
                 gradient: Self.sleepGradient(from: split, to: 1)
             ) {
                 HStack {
@@ -299,10 +422,16 @@ struct JetLagPlanView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if plan.flight != nil {
+                Text("The itinerary adds one transition day: \(plan.nights.count) nights + travel = \(plan.transitionDayCount) days.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Divider().opacity(0.3)
 
             if alarmsSet {
-                Label("Alarms set for all \(plan.nights.count) nights", systemImage: "checkmark.circle.fill")
+                Label(plan.flight == nil ? "Alarms set for all \(plan.nights.count) nights" : "Plan alarms set, including in-flight sleep", systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .foregroundStyle(.green)
 
@@ -335,7 +464,7 @@ struct JetLagPlanView: View {
                         }
                     }
                 } label: {
-                    Label("Set Alarms for All \(plan.nights.count) Nights", systemImage: "alarm.fill")
+                    Label(plan.flight == nil ? "Set Alarms for All \(plan.nights.count) Nights" : "Set Plan Alarms", systemImage: "alarm.fill")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
@@ -399,43 +528,40 @@ struct JetLagPlanView: View {
         return keys.last!.1
     }
 
-    /// Builds a 24-hour day/night gradient for arbitrary sunrise/sunset times,
+    /// Builds a 48-hour day/night gradient for arbitrary sunrise/sunset times,
     /// including daylight spans that wrap past the bar edges (e.g. a far-shifted
     /// destination drawn on the origin's clock, or the noon-centered axis).
     /// Sampled rather than hand-placed stops so no clamping is needed. The
     /// twilight palette mirrors the home-screen dial: long gold/amber approach
     /// to sunset, red at the horizon, purple after, deep blue before dawn.
     static func skyGradient(sunriseMinutes: Int, sunsetMinutes: Int) -> LinearGradient {
-        let day: RGB = (0.92, 0.92, 0.96)
-        let night: RGB = (0.06, 0.04, 0.18)
+        let day: RGB = (0.84, 0.81, 0.69)
+        let night: RGB = (0.09, 0.07, 0.24)
 
-        // Minutes from sunrise → color, walking up into full daylight.
+        // Blend sunrise blue directly into daytime cream without a white band.
         let morning: [(Double, RGB)] = [
-            (0, (0.45, 0.65, 0.85)),     // sunrise blue at the horizon
-            (25, (0.62, 0.78, 0.92)),
-            (55, (0.75, 0.85, 0.95)),
-            (110, (0.88, 0.90, 0.95)),
+            (0, (0.56, 0.74, 0.95)),     // sunrise blue at the horizon
             (210, day),
         ]
         // Minutes until sunset → color, the long warm slide into golden hour.
         let afternoon: [(Double, RGB)] = [
-            (0, (0.90, 0.38, 0.35)),     // sun on the horizon
-            (35, (0.92, 0.66, 0.45)),    // orange
-            (95, (0.93, 0.81, 0.58)),    // gold
-            (190, (0.91, 0.88, 0.87)),   // warm-tinged white
+            (0, (0.94, 0.42, 0.40)),     // sun on the horizon
+            (35, (0.98, 0.80, 0.52)),    // warm gold
+            (95, day),
+            (190, day),
             (300, day),
         ]
         // Minutes after sunset → color, through the purples into night.
         let dusk: [(Double, RGB)] = [
-            (0, (0.90, 0.38, 0.35)),
-            (30, (0.60, 0.20, 0.42)),    // magenta
-            (70, (0.25, 0.10, 0.32)),    // deep purple
+            (0, (0.94, 0.42, 0.40)),
+            (30, (0.72, 0.26, 0.50)),    // magenta
+            (70, (0.40, 0.15, 0.42)),    // deep purple
             (150, night),
         ]
         // Minutes until sunrise → color, night brightening toward dawn.
         let preDawn: [(Double, RGB)] = [
-            (0, (0.15, 0.25, 0.50)),     // twilight blue at the horizon
-            (35, (0.10, 0.11, 0.34)),
+            (0, (0.56, 0.74, 0.95)),     // sunrise blue at the horizon
+            (35, (0.18, 0.26, 0.56)),
             (110, night),
         ]
 
@@ -461,10 +587,10 @@ struct JetLagPlanView: View {
             return Color(red: rgb.r, green: rgb.g, blue: rgb.b)
         }
 
-        let sampleCount = 144  // 10-minute steps keep the horizon edges crisp
+        let sampleCount = Self.axisDurationMinutes / 10  // 10-minute steps keep the horizon edges crisp
         let stops = (0...sampleCount).map { i -> Gradient.Stop in
             let frac = Double(i) / Double(sampleCount)
-            let minute = (Double(Self.axisStartMinute) + frac * 1440).truncatingRemainder(dividingBy: 1440)
+            let minute = (Double(Self.axisStartMinute) + frac * Double(Self.axisDurationMinutes)).truncatingRemainder(dividingBy: 1440)
             return Gradient.Stop(color: color(atMinute: minute), location: frac)
         }
 
@@ -488,4 +614,5 @@ struct JetLagPlanView: View {
     NavigationStack {
         JetLagPlanView(plan: plan)
     }
+    .environmentObject(JetLagTripStore())
 }

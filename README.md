@@ -130,3 +130,18 @@ The 15-minute fall-asleep buffer is based on sleep onset latency research for he
 </p>
 </content>
 </invoke>
+## Flight schedules and itineraries
+
+Create Plan supports an optional itinerary of up to three connecting flights. Each leg has a flight number and departure-local date. Confirming a schedule fills the first departure and final arrival airports. Manual entry works without a flight-data subscription; enter each airport's local departure/arrival dates and times, including next-day arrivals.
+
+Automatic lookup defaults to the free public FlightStats page, with no account or API key. It reads scheduled gate times and airport time zones from embedded JSON, requires an exact flight-number/departure-date match, and asks the user to confirm the result. Coverage is limited, especially for distant dates, and page changes or access restrictions can break lookup. When a date has no schedule, lookup can offer recent usual times projected onto the selected local dates, explicitly marked as an estimate with the reference date. The user must select those estimated times and verify them against their booking; operation on the chosen day is not guaranteed. Confirmed cancellations are never replaced by an estimate. If lookup remains unavailable, manual entry is available. No scripts are executed and no access restrictions are bypassed.
+
+AeroDataBox remains an optional replacement if a provider subscription is added later:
+
+- For local Debug builds, set `AERODATABOX_API_KEY` in the Xcode Run scheme's environment. This uses AeroDataBox through RapidAPI. Keep the scheme private and never commit credentials.
+- For distribution, set the `FlightScheduleProxyURL` Info.plist value to an HTTPS backend URL. The app sends `flight` (normalized flight number) and `date` (`yyyy-MM-dd`, departure-local) query parameters. The backend owns provider credentials and forwards AeroDataBox's JSON flight array. Query its `/flights/number/{flight}/{date}?dateLocalRole=Departure` endpoint. No provider key is included in release builds.
+- Documentation: https://doc.aerodatabox.com/rapidapi.html. Lookup handles missing/incomplete schedules, cancellation, authorization errors, and rate limits. Multiple matches require the user to select the correct leg.
+
+A confirmed itinerary adds one travel day to the selected nights. Odd night counts allocate the extra night before departure. Night dates anchor to first departure/final arrival; each flight bar highlights overlap with the travel day's intermediate sleep target, excluding the first hour and final 45 minutes of each leg. Total in-flight sleep is capped at the usual sleep window and excludes layovers. If no useful overlap of at least one hour exists, that leg recommends staying awake. Plan alarms include recommended in-flight sleep windows.
+
+Saved plans retain the itinerary and absolute sleep dates. Changing the night count preserves the itinerary and updates the existing saved plan when saved again.

@@ -47,11 +47,35 @@ struct JetLagTrip: Identifiable, Codable, Equatable {
 @MainActor
 final class JetLagTripStore: ObservableObject {
     @Published private(set) var trips: [JetLagTrip] = []
+    @Published private(set) var savedPlans: [JetLagPlan] = []
 
     private static let storageKey = "jetLagTrips.v1"
+    private static let plansStorageKey = "jetLagPlans.v1"
+    private let defaults: UserDefaults
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         load()
+        if let data = defaults.data(forKey: Self.plansStorageKey),
+           let plans = try? JSONDecoder().decode([JetLagPlan].self, from: data) {
+            savedPlans = plans.sorted { $0.createdAt > $1.createdAt }
+        }
+    }
+
+    func savePlan(_ plan: JetLagPlan) throws {
+        var plans = savedPlans.filter { $0.createdAt != plan.createdAt }
+        plans.append(plan)
+        plans.sort { $0.createdAt > $1.createdAt }
+        let data = try JSONEncoder().encode(plans)
+        defaults.set(data, forKey: Self.plansStorageKey)
+        savedPlans = plans
+    }
+
+    func deletePlan(_ plan: JetLagPlan) throws {
+        let plans = savedPlans.filter { $0.createdAt != plan.createdAt }
+        let data = try JSONEncoder().encode(plans)
+        defaults.set(data, forKey: Self.plansStorageKey)
+        savedPlans = plans
     }
 
     func add(_ trip: JetLagTrip) {
@@ -66,7 +90,7 @@ final class JetLagTripStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Self.storageKey),
+        guard let data = defaults.data(forKey: Self.storageKey),
               let decoded = try? JSONDecoder().decode([JetLagTrip].self, from: data)
         else { return }
         trips = decoded.sorted { $0.departureSortDate > $1.departureSortDate }
@@ -74,6 +98,6 @@ final class JetLagTripStore: ObservableObject {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(trips) else { return }
-        UserDefaults.standard.set(data, forKey: Self.storageKey)
+        defaults.set(data, forKey: Self.storageKey)
     }
 }

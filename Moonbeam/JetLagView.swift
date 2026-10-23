@@ -8,12 +8,15 @@ import SwiftUI
 struct JetLagView: View {
     @EnvironmentObject private var sunTimes: SunTimesService
     @EnvironmentObject private var profile: SleepProfile
+    @EnvironmentObject private var tripStore: JetLagTripStore
     @State private var originQuery: String = ""
     @State private var destinationCity: String = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var plan: JetLagPlan?
     @State private var showingPlan = false
+    @State private var flightDrafts: [FlightDraft] = []
+    @State private var deleteError: String?
 
     /// Generic zone name like "Pacific Time (GMT-7)". The identifier's city
     /// ("Los Angeles") would usually be wrong — most users aren't in the city
@@ -37,6 +40,50 @@ struct JetLagView: View {
 
             ScrollView {
                 VStack(spacing: 20) {
+                    if !tripStore.savedPlans.isEmpty {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Saved Plans")
+                                .font(.headline)
+                            ForEach(tripStore.savedPlans, id: \.createdAt) { savedPlan in
+                                HStack(spacing: 16) {
+                                    NavigationLink {
+                                        JetLagPlanView(plan: savedPlan)
+                                    } label: {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text("\(savedPlan.originName) → \(savedPlan.destinationCity)")
+                                                    .font(.subheadline.weight(.semibold))
+                                                Text("\(savedPlan.nights.count)-Night Plan · \(savedPlan.createdAt.formatted(date: .abbreviated, time: .omitted))")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(role: .destructive) {
+                                        do {
+                                            try tripStore.deletePlan(savedPlan)
+                                        } catch {
+                                            deleteError = error.localizedDescription
+                                        }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .frame(minWidth: 44, minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.red)
+                                    .accessibilityLabel("Delete plan to \(savedPlan.destinationCity)")
+                                }
+                            }
+                        }
+                        .moonbeamCard()
+                    }
+
                     tripEntrySection
                     howItWorksSection
 
@@ -66,6 +113,22 @@ struct JetLagView: View {
         }
         .navigationTitle("Jet Lag")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Unable to Delete Plan", isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button("OK", role: .cancel) { deleteError = nil }
+        } message: {
+            Text(deleteError ?? "")
+        }
+        .onChange(of: flightDrafts) { _, drafts in
+            if let first = drafts.first?.schedule {
+                originQuery = first.departureAirport
+            }
+            if let last = drafts.last?.schedule {
+                destinationCity = last.arrivalAirport
+            }
+        }
         .navigationDestination(isPresented: $showingPlan) {
             if let plan = plan {
                 JetLagPlanView(plan: plan)
@@ -80,6 +143,8 @@ struct JetLagView: View {
             Label("Plan your trip", systemImage: "airplane.departure")
                 .font(.headline)
 
+            FlightItineraryEntryView(drafts: $flightDrafts)
+
             VStack(alignment: .leading, spacing: 6) {
                 Text("LEAVING FROM")
                     .font(.caption2.weight(.semibold))
@@ -88,8 +153,11 @@ struct JetLagView: View {
                 TextField(deviceTimeZoneLabel, text: $originQuery)
                     .textInputAutocapitalization(.words)
                     .jetLagFieldStyle()
+                    .disabled(!flightDrafts.isEmpty)
 
-                Text("Defaults to your device's timezone. Enter a city, airport code, or timezone to override.")
+                Text(flightDrafts.isEmpty
+                    ? "Defaults to your device's timezone. Enter a city, airport code, or timezone to override."
+                    : "Filled from the first flight’s departure airport.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -102,6 +170,7 @@ struct JetLagView: View {
                 TextField("City or airport code (e.g. Tokyo, LHR)", text: $destinationCity)
                     .textInputAutocapitalization(.words)
                     .jetLagFieldStyle()
+                    .disabled(!flightDrafts.isEmpty)
             }
 
             if let error = errorMessage {
@@ -173,6 +242,20 @@ struct JetLagView: View {
         isLoading = true
         errorMessage = nil
 
+        let flights = flightDrafts.compactMap(\.schedule)
+        if !flightDrafts.isEmpty {
+            if flights.count != flightDrafts.count {
+                errorMessage = "Look up or enter the scheduled times for every flight first."
+                isLoading = false
+                return
+            }
+            if let error = JetLagPlan.itineraryError(flights) {
+                errorMessage = error
+                isLoading = false
+                return
+            }
+        }
+
         do {
             // Origin: device timezone unless the user typed an override.
             let originName: String
@@ -218,7 +301,8 @@ struct JetLagView: View {
                 localOffsetHours: originOffset,
                 destOffsetHours: destination.offsetHours,
                 idealBedMinutes: profile.idealBedMinutes,
-                idealWakeMinutes: profile.idealWakeMinutes
+                idealWakeMinutes: profile.idealWakeMinutes,
+                flights: flights.isEmpty ? nil : flights
             )
 
             plan = newPlan
@@ -254,4 +338,5 @@ private extension View {
     }
     .environmentObject(SunTimesService())
     .environmentObject(SleepProfile())
+    .environmentObject(JetLagTripStore())
 }

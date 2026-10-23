@@ -30,6 +30,7 @@ struct JetLagNightPlan: Identifiable, Codable {
     /// Calendar day on which this night begins (the evening of).
     let date: Date
     let sleepWindow: JetLagSleepWindow
+    var scheduledBedDate: Date?
 
     init(nightIndex: Int, date: Date, sleepWindow: JetLagSleepWindow) {
         self.id = UUID()
@@ -41,6 +42,7 @@ struct JetLagNightPlan: Identifiable, Codable {
     /// Absolute bedtime. A bed time before noon belongs to the following
     /// calendar morning (e.g. "Night of June 8, bed at 1:50 AM" = June 9, 01:50).
     var bedDate: Date {
+        if let scheduledBedDate { return scheduledBedDate }
         let cal = Calendar.current
         let dayStart = cal.startOfDay(for: date)
         let offset = sleepWindow.bedMinutes < 720
@@ -68,15 +70,23 @@ struct JetLagPlan: Codable {
     /// Destination sunrise/sunset on the destination's clock.
     let destSunriseMinutes: Int
     let destSunsetMinutes: Int
-    let nights: [JetLagNightPlan]
+    var nights: [JetLagNightPlan]
     let createdAt: Date
+    var flights: [FlightSchedule]?
+    var flight: FlightSchedule? { flights?.first }
 
     /// Timezone difference normalized to the shortest direction, in minutes.
     /// Positive = destination ahead (shift sleep earlier), negative = behind
     /// (shift sleep later). A +14 h shift becomes a −10 h delay — delaying
     /// sleep is easier than advancing it.
     var tzShiftMinutes: Int {
-        Self.normalizedShiftMinutes(
+        if let flight {
+            let raw = ((flights?.last ?? flight).arrivalTimeZone.secondsFromGMT(for: (flights?.last ?? flight).arrival)
+                - flight.departureTimeZone.secondsFromGMT(for: flight.departure)) / 60
+            let wrapped = ((raw % 1440) + 1440) % 1440
+            return wrapped > 720 ? wrapped - 1440 : wrapped
+        }
+        return Self.normalizedShiftMinutes(
             localOffsetHours: localOffsetHours,
             destOffsetHours: destinationOffsetHours
         )
@@ -113,7 +123,9 @@ struct JetLagPlan: Codable {
             destOffsetHours: destinationOffsetHours,
             idealBedMinutes: idealBedMinutes,
             idealWakeMinutes: idealWakeMinutes,
-            sleepDurationMinutes: sleepDurationMinutes
+            sleepDurationMinutes: sleepDurationMinutes,
+            createdAt: createdAt,
+            flights: flights
         )
     }
 
@@ -134,7 +146,9 @@ enum JetLagPlanCalculator {
         destOffsetHours: Int,
         idealBedMinutes: Int = 22 * 60 + 30,
         idealWakeMinutes: Int = 7 * 60,
-        sleepDurationMinutes: Int = 7 * 60 + 30
+        sleepDurationMinutes: Int = 7 * 60 + 30,
+        createdAt: Date = Date(),
+        flights: [FlightSchedule]? = nil
     ) -> JetLagPlan {
         let shift = JetLagPlan.normalizedShiftMinutes(
             localOffsetHours: localOffsetHours,
@@ -164,7 +178,7 @@ enum JetLagPlanCalculator {
             nights.append(JetLagNightPlan(nightIndex: i, date: nightDate, sleepWindow: window))
         }
 
-        return JetLagPlan(
+        let plan = JetLagPlan(
             originName: originName,
             destinationCity: destinationCity,
             localOffsetHours: localOffsetHours,
@@ -177,8 +191,9 @@ enum JetLagPlanCalculator {
             destSunriseMinutes: destSunrise,
             destSunsetMinutes: destSunset,
             nights: nights,
-            createdAt: Date()
+            createdAt: createdAt
         )
+        return flights.map { plan.applyingFlights($0) } ?? plan
     }
 
     // MARK: - Place Resolution
