@@ -93,10 +93,6 @@ struct SleepSliderView: View {
         selectedTimes.sleepMinutes(fallAsleepMinutes: profile.fallAsleepMinutes)
     }
 
-    private var fallAsleepBufferMinutes: Int {
-        min(max(0, profile.fallAsleepMinutes), selectedTimes.durationMinutes)
-    }
-
     private var displayBedAngle: Double {
         SleepCalculator.continuousAngle(Double(selectedTimes.bedMinutes) / 1440 * 2 * .pi, near: bedAngle)
     }
@@ -119,36 +115,13 @@ struct SleepSliderView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             timeLabels
                 .fixedSize(horizontal: false, vertical: true)
             dialView
-                .frame(maxHeight: .infinity)
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Button {
-                        sleepNowTrigger += 1
-                    } label: {
-                        Label("Sleep Now", systemImage: "moon.zzz.fill")
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                    }
-                    Button(action: alarmAction) {
-                        Label(alarmSet ? "Delete Alarm" : "Create Alarm",
-                              systemImage: alarmSet ? "trash" : "alarm.fill")
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                    }
-                    .disabled(isUpdatingAlarm)
-                }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.glass)
-                .controlSize(.small)
-                .offset(y: 10)
-                Spacer(minLength: 0)
-                locationButton
-            }
-            .fixedSize(horizontal: false, vertical: true)
+                .aspectRatio(1, contentMode: .fit)
+            controls
+                .padding(.top, 6)
         }
         .onAppear { publishTimes() }
         .onChange(of: displayBedMinutes) { publishTimes() }
@@ -194,53 +167,114 @@ struct SleepSliderView: View {
         usesExactTimes = false
     }
 
-    private func timeLock(_ title: String, isLocked: Bool, handle: HandleType,
-                          minHeight: CGFloat = 44) -> some View {
-        Button {
-            captureDisplayedTimes()
-            usesExactTimes = true
-            if handle == .bed {
-                bedtimeLocked.toggle()
-            } else {
-                alarmLocked.toggle()
-                if alarmLocked { wakeByMinutes = nil }
+    // MARK: - Controls
+
+    private var controls: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 8) {
+                modeChip("Lock Bedtime", icon: bedtimeLocked ? "lock.fill" : "lock.open",
+                         isOn: bedtimeLocked,
+                         hint: "Keeps bedtime fixed while the wake-up time adjusts. You can still drag or edit it.") {
+                    toggleLock(.bed)
+                }
+                modeChip("Lock Wake-Up", icon: alarmLocked ? "lock.fill" : "lock.open",
+                         isOn: alarmLocked,
+                         hint: "Keeps the wake-up time fixed while bedtime adjusts. You can still drag or edit it.") {
+                    toggleLock(.wake)
+                }
+                modeChip("Smart Wake", icon: "sparkles",
+                         isOn: wakeByMinutes != nil,
+                         hint: "Treats the wake-up time as a deadline and rings at the end of the last full cycle before it.",
+                         value: wakeByMinutes.map { SleepCalculator.formattedTime(minutesSinceMidnight: $0) }) {
+                    toggleSmartWake()
+                }
             }
-            haptic.impactOccurred()
-        } label: {
-            Label(title, systemImage: isLocked ? "checkmark.square.fill" : "square")
-                .font(.caption)
-                .foregroundStyle(isLocked ? .white : .white.opacity(0.6))
-                .frame(minHeight: minHeight, alignment: .leading)
+
+            HStack(spacing: 12) {
+                roundButton("moon.zzz.fill", label: "Sleep Now",
+                            hint: "Moves bedtime to right now") {
+                    sleepNowTrigger += 1
+                }
+
+                Button(action: alarmAction) {
+                    Label(alarmSet ? "Remove Alarm" : "Set Alarm",
+                          systemImage: alarmSet ? "alarm.waves.left.and.right.fill" : "alarm.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(alarmSet ? Color(red: 0.36, green: 0.30, blue: 0.62) : Color(red: 0.42, green: 0.40, blue: 0.86))
+                .buttonBorderShape(.capsule)
+                .disabled(isUpdatingAlarm)
+                .accessibilityHint(alarmSet ? "Removes the alarm Moonbeam set for this sleep" : "Sets a real alarm for the wake-up time")
+
+                roundButton("location.fill", label: "Location",
+                            hint: "Shows your location and today's sun times") {
+                    sunTimes.requestLocationDetails()
+                    showingLocation = true
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityValue(isLocked ? "Locked" : "Unlocked")
-        .accessibilityHint("Prevents automatic changes. You can still drag or edit this time.")
-        .accessibilityAddTraits(isLocked ? .isSelected : [])
     }
 
-    private var wakeByToggle: some View {
-        Button {
-            captureDisplayedTimes()
-            if wakeByMinutes == nil {
-                wakeByMinutes = displayWakeMinutes
-                alarmLocked = false
-            } else {
-                wakeByMinutes = nil
-                usesExactTimes = true
-            }
-            haptic.impactOccurred()
-        } label: {
-            Label("Wake By Mode", systemImage: wakeByMinutes != nil ? "checkmark.square.fill" : "square")
-                .font(.caption)
+    /// A toggle that stays highlighted while it's on.
+    private func modeChip(_ title: String, icon: String, isOn: Bool, hint: String,
+                          value: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.footnote.weight(.semibold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .foregroundStyle(wakeByMinutes != nil ? .white : .white.opacity(0.6))
-                .frame(minHeight: 22)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(isOn ? .white : .white.opacity(0.65))
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .padding(.horizontal, 6)
+                .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .accessibilityValue(wakeByMinutes.map { SleepCalculator.formattedTime(minutesSinceMidnight: $0) } ?? "Off")
-        .accessibilityHint("Allows an earlier alarm to complete a REM cycle. Drag or edit the alarm to change the deadline.")
-        .accessibilityAddTraits(wakeByMinutes != nil ? .isSelected : [])
+        .glassEffect(isOn ? .regular.tint(Color(red: 0.42, green: 0.40, blue: 0.86).opacity(0.75)).interactive()
+                          : .regular.interactive(),
+                     in: .capsule)
+        .animation(.snappy, value: isOn)
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(value ?? (isOn ? "On" : "Off"))
+        .accessibilityHint(hint)
+    }
+
+    private func roundButton(_ icon: String, label: String, hint: String,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.title3.weight(.medium))
+                .frame(width: 52, height: 52)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .accessibilityLabel(label)
+        .accessibilityHint(hint)
+    }
+
+    private func toggleLock(_ handle: HandleType) {
+        captureDisplayedTimes()
+        usesExactTimes = true
+        if handle == .bed {
+            bedtimeLocked.toggle()
+        } else {
+            alarmLocked.toggle()
+            if alarmLocked { wakeByMinutes = nil }
+        }
+        haptic.impactOccurred()
+    }
+
+    private func toggleSmartWake() {
+        captureDisplayedTimes()
+        if wakeByMinutes == nil {
+            wakeByMinutes = displayWakeMinutes
+            alarmLocked = false
+        } else {
+            wakeByMinutes = nil
+            usesExactTimes = true
+        }
+        haptic.impactOccurred()
     }
 
     private func timeValueButton(_ handle: HandleType) -> some View {
@@ -251,7 +285,7 @@ struct SleepSliderView: View {
             editingTime = handle
         } label: {
             Text(SleepCalculator.formattedTime(minutesSinceMidnight: minutes))
-                .font(.title3.weight(.bold).monospacedDigit())
+                .font(.title2.weight(.bold).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .padding(.vertical, 4)
@@ -275,22 +309,6 @@ struct SleepSliderView: View {
             if wakeByMinutes != nil { wakeByMinutes = minutes }
         }
         publishTimes()
-    }
-
-    private var locationButton: some View {
-        Button {
-            sunTimes.requestLocationDetails()
-            showingLocation = true
-        } label: {
-            Image(systemName: "mappin.and.ellipse")
-                .font(.body.weight(.medium))
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .accessibilityLabel("Current location")
-        .accessibilityHint("Shows your current city or location")
-        .padding(4)
     }
 
     private var locationSheet: some View {
@@ -403,40 +421,44 @@ struct SleepSliderView: View {
 
     private var timeLabels: some View {
         HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("BEDTIME", systemImage: "bed.double.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                timeValueButton(.bed)
-                Text(displayBedMinutes >= 720 ? "Tonight" : "Tomorrow")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                timeLock("Fix Bedtime", isLocked: bedtimeLocked, handle: .bed, minHeight: 22)
-                    .frame(height: 44, alignment: .top)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            timeColumn(.bed,
+                       title: "BEDTIME", icon: "bed.double.fill",
+                       isLocked: bedtimeLocked,
+                       day: displayBedMinutes >= 720 ? "Tonight" : "Tomorrow")
             Color.clear.frame(width: 112, height: 1)
-            VStack(alignment: .trailing, spacing: 4) {
-                Label(wakeByMinutes != nil ? "WAKE BY" : "WAKE UP", systemImage: "alarm.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                timeValueButton(.wake)
-                Text((wakeByMinutes ?? displayWakeMinutes) < 720 ? "Tomorrow" : "Today")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                VStack(alignment: .trailing, spacing: 0) {
-                    wakeByToggle
-                    timeLock("Fix Alarm", isLocked: alarmLocked, handle: .wake, minHeight: 22)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            timeColumn(.wake,
+                       title: wakeByMinutes != nil ? "WAKE BY" : "WAKE UP", icon: "alarm.fill",
+                       isLocked: alarmLocked,
+                       day: (wakeByMinutes ?? displayWakeMinutes) < 720 ? "Tomorrow" : "Today")
         }
         .overlay(alignment: .top) {
             durationLabel
                 .frame(width: 112)
-                .offset(y: -4)
         }
         .padding(.horizontal, 4)
+    }
+
+    private func timeColumn(_ handle: HandleType, title: String, icon: String,
+                            isLocked: Bool, day: String) -> some View {
+        let alignment: HorizontalAlignment = handle == .bed ? .leading : .trailing
+        return VStack(alignment: alignment, spacing: 2) {
+            HStack(spacing: 4) {
+                Label(title, systemImage: icon)
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.caption2)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            timeValueButton(handle)
+            Text(day)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .animation(.snappy, value: isLocked)
+        .frame(maxWidth: .infinity, alignment: handle == .bed ? .leading : .trailing)
     }
 
     // MARK: - Duration Label
@@ -484,7 +506,7 @@ struct SleepSliderView: View {
 
             ZStack {
                 // Recessed groove shadow, drawn beneath the ring so only its
-                // edges show beneath the muted sky colors.
+                // edges darken and the sky colors stay at full strength.
                 Circle()
                     .stroke(Color.black.opacity(0.35), lineWidth: ringWidth + 8)
                     .blur(radius: 5)
@@ -571,7 +593,6 @@ struct SleepSliderView: View {
 
     private func backgroundSkyRing(center: CGPoint, radius: CGFloat) -> some View {
         let night = Color(red: 0.09, green: 0.07, blue: 0.24)
-        let daylight = Color(red: 0.84, green: 0.81, blue: 0.69)
         let events = sunTimes.sunEvents
         let calendar = Calendar.current
         func minutes(_ date: Date?) -> Double? {
@@ -599,9 +620,11 @@ struct SleepSliderView: View {
             (dawn, night),
             (dawn + dawnSpan * 0.55, Color(red: 0.18, green: 0.26, blue: 0.56)),
             (sunrise, Color(red: 0.56, green: 0.74, blue: 0.95)),
-            (sunrise + shoulder, daylight),
-            (sunset - shoulder, daylight),
-            (sunset - shoulder * 0.35, Color(red: 0.98, green: 0.80, blue: 0.52)),
+            (sunrise + shoulder, Color(red: 0.76, green: 0.86, blue: 0.99)),
+            ((sunrise + sunset) / 2, Color(red: 0.88, green: 0.92, blue: 0.99)),
+            (sunset - shoulder, Color(red: 0.93, green: 0.89, blue: 0.88)),
+            (sunset - shoulder * 0.6, Color(red: 0.98, green: 0.80, blue: 0.52)),
+            (sunset - shoulder * 0.3, Color(red: 0.98, green: 0.62, blue: 0.40)),
             (sunset, Color(red: 0.94, green: 0.42, blue: 0.40)),
             (sunset + duskSpan * 0.32, Color(red: 0.72, green: 0.26, blue: 0.50)),
             (sunset + duskSpan * 0.64, Color(red: 0.40, green: 0.15, blue: 0.42)),
@@ -634,7 +657,6 @@ struct SleepSliderView: View {
 
         return Circle()
             .stroke(gradient, lineWidth: ringWidth)
-            .saturation(0.5)
             .frame(width: radius * 2, height: radius * 2)
             .position(center)
     }
@@ -729,24 +751,13 @@ struct SleepSliderView: View {
     // MARK: - Sleep Arc (Glass Look — Continuous Fill)
 
     private func sleepArc(center: CGPoint, radius: CGFloat) -> some View {
-        let bufferAngle = Double(fallAsleepBufferMinutes) / 1440 * 2 * .pi
-        let startSwiftUI = displayBedAngle + bufferAngle - .pi / 2
-        let trimEnd = CGFloat(totalSleepMinutes) / 1440
+        // The arc runs from bedtime itself. The fall-asleep buffer is only a few
+        // points of dial, so it shows up as the first cycle divider sitting a
+        // little later rather than as a separate marker.
+        let startSwiftUI = displayBedAngle - .pi / 2
+        let trimEnd = CGFloat(selectedTimes.durationMinutes) / 1440
 
         return ZStack {
-            // Bridge the fall-asleep gap along both rims without filling it in.
-            if fallAsleepBufferMinutes > 0 {
-                ForEach([-1.0, 1.0], id: \.self) { edge in
-                    let edgeRadius = radius + CGFloat(edge) * (ringWidth / 2 - 1)
-                    Circle()
-                        .trim(from: 0, to: CGFloat(fallAsleepBufferMinutes) / 1440)
-                        .stroke(.white.opacity(0.9), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        .frame(width: edgeRadius * 2, height: edgeRadius * 2)
-                        .rotationEffect(.radians(displayBedAngle - .pi / 2))
-                        .position(center)
-                }
-            }
-
             // Soft glow behind — single continuous arc
             Circle()
                 .trim(from: 0, to: trimEnd)

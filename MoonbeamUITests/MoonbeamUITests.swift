@@ -88,8 +88,8 @@ final class MoonbeamUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let createAlarm = app.buttons["Create Alarm"]
-        let deleteAlarm = app.buttons["Delete Alarm"]
+        let createAlarm = app.buttons["Set Alarm"]
+        let deleteAlarm = app.buttons["Remove Alarm"]
         if deleteAlarm.exists { deleteAlarm.tap() }
         XCTAssertTrue(createAlarm.waitForExistence(timeout: 5))
         createAlarm.tap()
@@ -99,7 +99,7 @@ final class MoonbeamUITests: XCTestCase {
         app.terminate()
         app.launch()
         XCTAssertTrue(deleteAlarm.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Other alarms created in iOS are not visible here"].exists)
+        XCTAssertTrue(app.staticTexts["Alarms set in the Clock app don't appear here."].exists)
         deleteAlarm.tap()
         XCTAssertTrue(createAlarm.waitForExistence(timeout: 5))
         XCTAssertFalse(deleteAlarm.exists)
@@ -116,7 +116,7 @@ final class MoonbeamUITests: XCTestCase {
         formatter.locale = Locale(identifier: "en_US")
         formatter.dateFormat = "h:mm a"
         for fixedAlarm in [false, true] {
-            if fixedAlarm { app.buttons["Fix Alarm"].tap() }
+            if fixedAlarm { app.buttons["Lock Wake-Up"].tap() }
             let alarmBefore = app.buttons["Edit alarm time"].value as? String
             let before = formatter.string(from: Date())
             sleepNow.tap()
@@ -142,11 +142,11 @@ final class MoonbeamUITests: XCTestCase {
         alarm.tap()
         app.pickerWheels.element(boundBy: 1).adjust(toPickerWheelValue: "13")
         app.buttons["Done"].tap()
-        app.buttons["Fix Alarm"].tap()
-        let wakeBy = app.buttons["Wake By Mode"]
+        app.buttons["Lock Wake-Up"].tap()
+        let wakeBy = app.buttons["Smart Wake"]
         XCTAssertTrue(wakeBy.isHittable)
         wakeBy.tap()
-        XCTAssertEqual(app.buttons["Fix Alarm"].value as? String, "Unlocked")
+        XCTAssertEqual(app.buttons["Lock Wake-Up"].value as? String, "Off")
         XCTAssertTrue((wakeBy.value as? String)?.contains("7:13") == true)
         let wakeByTime = app.buttons["Edit wake by time"]
         XCTAssertTrue((wakeByTime.value as? String)?.contains("7:13") == true)
@@ -187,14 +187,14 @@ final class MoonbeamUITests: XCTestCase {
         let dial = app.otherElements["sleepDial"]
         let frameWithoutWarning = dial.frame
 
-        let bedtimeLock = app.buttons["Fix Bedtime"]
+        let bedtimeLock = app.buttons["Lock Bedtime"]
         XCTAssertTrue(bedtimeLock.isHittable)
         XCTAssertEqual(app.scrollViews.count, 0)
         bedtimeLock.tap()
-        XCTAssertEqual(bedtimeLock.value as? String, "Locked")
-        let alarmLock = app.buttons["Fix Alarm"]
+        XCTAssertEqual(bedtimeLock.value as? String, "On")
+        let alarmLock = app.buttons["Lock Wake-Up"]
         alarmLock.tap()
-        XCTAssertEqual(alarmLock.value as? String, "Locked")
+        XCTAssertEqual(alarmLock.value as? String, "On")
         XCTAssertTrue(app.staticTexts["Incomplete REM"]
             .waitForExistence(timeout: 3))
         XCTAssertEqual(dial.frame.width, frameWithoutWarning.width, accuracy: 0.5)
@@ -203,7 +203,7 @@ final class MoonbeamUITests: XCTestCase {
         XCTAssertEqual(dial.frame.midY, frameWithoutWarning.midY, accuracy: 0.5)
         XCTAssertTrue((bedtime.value as? String)?.contains(":37") == true)
         XCTAssertTrue(app.buttons["Sleep Now"].isHittable)
-        XCTAssertTrue(app.buttons["Create Alarm"].isHittable || app.buttons["Delete Alarm"].isHittable)
+        XCTAssertTrue(app.buttons["Set Alarm"].isHittable || app.buttons["Remove Alarm"].isHittable)
         attach(app, name: "exact-times-locked-with-warning")
     }
 
@@ -215,8 +215,8 @@ final class MoonbeamUITests: XCTestCase {
             let deny = app.alerts.buttons["Don’t Allow"]
             if deny.exists { deny.tap() }
         }
-        app.buttons["Fix Bedtime"].tap()
-        app.buttons["Fix Alarm"].tap()
+        app.buttons["Lock Bedtime"].tap()
+        app.buttons["Lock Wake-Up"].tap()
         let bedtime = app.buttons["Edit bedtime"]
         let alarm = app.buttons["Edit alarm time"]
         let originalBedtime = bedtime.value as? String
@@ -240,8 +240,8 @@ final class MoonbeamUITests: XCTestCase {
         dragTime(from: 7 * 60 + 45, to: 6 * 60 + 45)
         XCTAssertNotEqual(alarm.value as? String, originalAlarm)
         XCTAssertEqual(bedtime.value as? String, changedBedtime)
-        XCTAssertEqual(app.buttons["Fix Bedtime"].value as? String, "Locked")
-        XCTAssertEqual(app.buttons["Fix Alarm"].value as? String, "Locked")
+        XCTAssertEqual(app.buttons["Lock Bedtime"].value as? String, "On")
+        XCTAssertEqual(app.buttons["Lock Wake-Up"].value as? String, "On")
     }
 
     @MainActor

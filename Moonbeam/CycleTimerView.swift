@@ -18,8 +18,8 @@ struct CycleTimerView: View {
         ZStack {
             Color.clear.moonbeamBackground()
 
-            GeometryReader { geometry in
-                VStack(alignment: .leading, spacing: 12) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
                     SleepSliderView(
                         publishedBedMinutes: $bedMinutes,
                         publishedWakeMinutes: $wakeMinutes,
@@ -50,15 +50,14 @@ struct CycleTimerView: View {
                             }
                         }
                     }
-                    .moonbeamCard()
-                    .frame(maxHeight: min(geometry.size.width + 170, geometry.size.height * 0.79) - 36)
 
                     tomorrowAlarms
-                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
             }
+            .scrollBounceBehavior(.basedOnSize)
 
         }
         .navigationTitle("")
@@ -92,17 +91,12 @@ struct CycleTimerView: View {
     private var tomorrowAlarms: some View {
         let upcoming = ScheduledAlarm.forTomorrow(alarms.scheduledAlarms)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Tomorrow’s alarms")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("Moonbeam")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text("TOMORROW")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
             if upcoming.isEmpty {
-                Text(alarms.isAuthorized ? "No alarms set for tomorrow." : "Create an alarm to get started.")
-                    .font(.caption)
+                Text(alarms.isAuthorized ? "No Moonbeam alarms set for tomorrow." : "Set an alarm to get started.")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(upcoming) { alarm in
@@ -120,14 +114,12 @@ struct CycleTimerView: View {
                     .accessibilityElement(children: .combine)
                 }
             }
-            Text("Other alarms created in iOS are not visible here")
+            Text("Alarms set in the Clock app don't appear here.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 6)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
 }
