@@ -276,7 +276,7 @@ struct JetLagView: View {
                 let resolved = try await JetLagPlanCalculator.resolvePlace(originInput)
                 originName = resolved.name
                 originOffset = resolved.offsetHours
-                originSun = await JetLagPlanCalculator.fetchSunTimes(
+                originSun = JetLagPlanCalculator.sunTimes(
                     lat: resolved.latitude,
                     lng: resolved.longitude,
                     timeZone: resolved.timeZone
@@ -284,7 +284,7 @@ struct JetLagView: View {
             }
 
             let destination = try await JetLagPlanCalculator.resolvePlace(city)
-            let destSun = await JetLagPlanCalculator.fetchSunTimes(
+            let destSun = JetLagPlanCalculator.sunTimes(
                 lat: destination.latitude,
                 lng: destination.longitude,
                 timeZone: destination.timeZone

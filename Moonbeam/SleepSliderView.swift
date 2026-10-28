@@ -346,7 +346,6 @@ struct SleepSliderView: View {
                         Text("— means no time is available for this date.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        SunAttribution()
                     } else if let error = sunTimes.sunEventsError {
                         Text(error)
                             .font(.subheadline)

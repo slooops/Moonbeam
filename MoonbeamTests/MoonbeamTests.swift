@@ -123,40 +123,52 @@ struct MoonbeamTests {
         #expect(times.wakeMinutes == 7 * 60 + 13)
     }
 
-    @Test func sunEventsDecodeAllTwilightsAndISOTimeFormats() throws {
-        let data = Data(#"""
-        {
-          "sunrise": "2026-10-22T07:30:00+02:00",
-          "sunset": "2026-10-22T18:18:00.000+02:00",
-          "civil_twilight_begin": "2026-10-22T07:02:00+02:00",
-          "civil_twilight_end": "2026-10-22T18:46:00+02:00",
-          "nautical_twilight_begin": "2026-10-22T06:30:00+02:00",
-          "nautical_twilight_end": "2026-10-22T19:18:00+02:00",
-          "astronomical_twilight_begin": "2026-10-22T05:58:00+02:00",
-          "astronomical_twilight_end": "2026-10-22T19:50:00+02:00"
+    /// Local sunrise/sunset in minutes, compared with published almanac times.
+    private func sunMinutes(_ lat: Double, _ lng: Double, _ day: String, _ zone: String) throws -> (sunrise: Int, sunset: Int) {
+        let timeZone = try #require(TimeZone(identifier: zone))
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        let date = try #require(formatter.date(from: day))
+        return try #require(SolarCalculator.sunriseSunsetMinutes(latitude: lat, longitude: lng,
+                                                                 on: date, timeZone: timeZone))
+    }
+
+    @Test func solarCalculatorMatchesAlmanacTimes() throws {
+        // (lat, lng, date, zone, sunrise, sunset) within a few minutes.
+        let cases: [(Double, Double, String, String, Int, Int)] = [
+            (40.7128, -74.0060, "2026-06-21", "America/New_York", 5 * 60 + 25, 20 * 60 + 31),
+            (51.5074, -0.1278, "2026-12-21", "Europe/London", 8 * 60 + 4, 15 * 60 + 53),
+            (-33.8688, 151.2093, "2026-01-01", "Australia/Sydney", 5 * 60 + 47, 20 * 60 + 9),
+        ]
+        for (lat, lng, day, zone, sunrise, sunset) in cases {
+            let times = try sunMinutes(lat, lng, day, zone)
+            #expect(abs(times.sunrise - sunrise) <= 3, "\(zone) sunrise \(times.sunrise)")
+            #expect(abs(times.sunset - sunset) <= 3, "\(zone) sunset \(times.sunset)")
         }
-        """#.utf8)
-        let events = try JSONDecoder().decode(SunEventTimes.self, from: data)
+    }
+
+    @Test func solarEventsAreOrderedThroughTheDay() {
+        let events = SolarCalculator.events(latitude: 48.8566, longitude: 2.3522,
+                                            on: Date(timeIntervalSince1970: 1_792_670_400), // 2026-10-22
+                                            timeZone: TimeZone(identifier: "Europe/Paris")!)
         let ordered = [events.astronomicalDawn, events.nauticalDawn, events.civilDawn,
                        events.sunrise, events.sunset, events.civilDusk,
                        events.nauticalDusk, events.astronomicalDusk]
         #expect(ordered.allSatisfy { $0 != nil })
         let dates = ordered.compactMap { $0 }
         #expect(dates == dates.sorted())
-        let sunrise = try #require(events.sunrise)
-        var utc = Calendar(identifier: .gregorian)
-        utc.timeZone = TimeZone(secondsFromGMT: 0)!
-        #expect(utc.component(.hour, from: sunrise) == 5)
-        #expect(utc.component(.minute, from: sunrise) == 30)
     }
 
-    @Test func missingSunEventsStayUnavailable() throws {
-        let events = try JSONDecoder().decode(SunEventTimes.self,
-            from: Data(#"{"sunrise":null,"civil_twilight_begin":"not-a-date"}"#.utf8))
+    @Test func polarNightHasTwilightButNoSunrise() {
+        // Tromsø in midwinter: the sun stays below the horizon but civil twilight still happens.
+        let events = SolarCalculator.events(latitude: 69.6492, longitude: 18.9553,
+                                            on: Date(timeIntervalSince1970: 1_797_854_400), // 2026-12-21
+                                            timeZone: TimeZone(identifier: "Europe/Oslo")!)
         #expect(events.sunrise == nil)
         #expect(events.sunset == nil)
-        #expect(events.civilDawn == nil)
-        #expect(events.astronomicalDusk == nil)
+        #expect(events.civilDawn != nil)
     }
 
     private func makePlan(localOffset: Int, destOffset: Int, nights: Int = 3) -> JetLagPlan {

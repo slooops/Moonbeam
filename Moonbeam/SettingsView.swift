@@ -231,8 +231,6 @@ struct SettingsView: View {
 
             Divider().opacity(0.3)
 
-            SunAttribution()
-
             Text("Moonbeam \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                 .font(.caption)
                 .foregroundStyle(.tertiary)

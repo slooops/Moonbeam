@@ -261,39 +261,15 @@ enum JetLagPlanCalculator {
 
     // MARK: - Sun Times
 
-    /// Fetches sunrise/sunset for the coordinates, expressed as minutes since
+    /// Sunrise/sunset for the coordinates, expressed as minutes since
     /// midnight on the clock of `timeZone` (the place's own local time).
-    static func fetchSunTimes(lat: Double?, lng: Double?, timeZone: TimeZone) async -> (sunrise: Int, sunset: Int) {
+    /// Falls back to 6:30 AM / 8:00 PM when there's no location or the sun
+    /// doesn't rise or set that day.
+    static func sunTimes(lat: Double?, lng: Double?, timeZone: TimeZone) -> (sunrise: Int, sunset: Int) {
         let fallback = (390, 1200)
-        guard let lat, let lng,
-              let url = SunAPI.url(lat: lat, lng: lng) else {
-            return fallback
-        }
-
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let response = try JSONDecoder().decode(SunAPIPublicResponse.self, from: data)
-            guard response.status == "OK" else { return fallback }
-
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            var sr = formatter.date(from: response.results.sunrise)
-            var ss = formatter.date(from: response.results.sunset)
-            if sr == nil || ss == nil {
-                formatter.formatOptions = [.withInternetDateTime]
-                sr = sr ?? formatter.date(from: response.results.sunrise)
-                ss = ss ?? formatter.date(from: response.results.sunset)
-            }
-            guard let sunrise = sr, let sunset = ss else { return fallback }
-
-            var cal = Calendar(identifier: .gregorian)
-            cal.timeZone = timeZone
-            let srMin = cal.component(.hour, from: sunrise) * 60 + cal.component(.minute, from: sunrise)
-            let ssMin = cal.component(.hour, from: sunset) * 60 + cal.component(.minute, from: sunset)
-            return (srMin, ssMin)
-        } catch {
-            return fallback
-        }
+        guard let lat, let lng else { return fallback }
+        return SolarCalculator.sunriseSunsetMinutes(latitude: lat, longitude: lng, timeZone: timeZone)
+            ?? fallback
     }
 
     enum CityResolveError: LocalizedError {
@@ -396,14 +372,4 @@ enum JetLagPlanCalculator {
         "HNL": Airport(city: "Honolulu", tzID: "Pacific/Honolulu", lat: 21.3245, lng: -157.9251),
         "ANC": Airport(city: "Anchorage", tzID: "America/Anchorage", lat: 61.1743, lng: -149.9963),
     ]
-}
-
-private struct SunAPIPublicResponse: Codable, Sendable {
-    let results: SunAPIPublicResults
-    let status: String
-}
-
-private struct SunAPIPublicResults: Codable, Sendable {
-    let sunrise: String
-    let sunset: String
 }
