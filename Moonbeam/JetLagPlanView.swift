@@ -46,6 +46,7 @@ struct JetLagPlanView: View {
                     timezoneAndAlarmSection
                 }
                 .padding()
+                .moonbeamReadableWidth()
             }
         }
         .navigationTitle("Transition Plan")

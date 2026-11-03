@@ -19,6 +19,14 @@ extension View {
         .ignoresSafeArea()
     }
 
+    /// Keeps content at a comfortable reading width on wide screens such as
+    /// the unfolded iPhone Duo, centered in the available space.
+    func moonbeamReadableWidth(_ maxWidth: CGFloat = 560) -> some View {
+        self
+            .frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity)
+    }
+
     func moonbeamCard() -> some View {
         self
             .padding(20)

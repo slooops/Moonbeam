@@ -18,47 +18,37 @@ struct CycleTimerView: View {
         ZStack {
             Color.clear.moonbeamBackground()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    SleepSliderView(
-                        publishedBedMinutes: $bedMinutes,
-                        publishedWakeMinutes: $wakeMinutes,
-                        sleepNowTrigger: $sleepNowTrigger,
-                        alarmSet: homeAlarm != nil,
-                        isUpdatingAlarm: isUpdatingAlarm
-                    ) {
-                        guard !isUpdatingAlarm else { return }
-                        let alarmToDelete = homeAlarm
-                        isUpdatingAlarm = true
-                        Task {
-                            defer { isUpdatingAlarm = false }
-                            if let alarmToDelete {
-                                do {
-                                    try alarms.deleteAlarm(id: alarmToDelete.id)
-                                } catch {
-                                    schedulingError = error.localizedDescription
-                                }
-                            } else {
-                                let result = await alarms.scheduleSleepAlarm(
-                                    bedMinutes: bedMinutes,
-                                    wakeMinutes: wakeMinutes,
-                                    label: "Sleep Cycle"
-                                )
-                                if case .failure(let error) = result {
-                                    schedulingError = error.localizedDescription
-                                }
-                            }
+            GeometryReader { geometry in
+                let isWide = geometry.size.width > geometry.size.height && geometry.size.width >= 700
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 28) {
+                        SleepSliderView(
+                            publishedBedMinutes: $bedMinutes,
+                            publishedWakeMinutes: $wakeMinutes,
+                            sleepNowTrigger: $sleepNowTrigger,
+                            alarmSet: homeAlarm != nil,
+                            isUpdatingAlarm: isUpdatingAlarm,
+                            // Beside the controls the dial can use the full height;
+                            // above them, leave room for the times and buttons.
+                            maxDialSize: isWide ? min(geometry.size.height - 70, geometry.size.width * 0.5)
+                                : max(220, geometry.size.height - 260),
+                            isWide: isWide,
+                            wideFooter: isWide ? AnyView(tomorrowAlarms) : nil,
+                            alarmAction: toggleHomeAlarm
+                        )
+
+                        if !isWide {
+                            tomorrowAlarms
                         }
                     }
-
-                    tomorrowAlarms
+                    .padding(.horizontal, 20)
+                    .padding(.top, isWide ? 0 : 12)
+                    .padding(.bottom, isWide ? 0 : 24)
+                    .moonbeamReadableWidth(isWide ? 900 : 540)
+                    .frame(minHeight: isWide ? geometry.size.height : nil)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .scrollBounceBehavior(.basedOnSize)
-
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -80,6 +70,31 @@ struct CycleTimerView: View {
             Text(schedulingError ?? "Please try again.")
         }
 
+    }
+
+    private func toggleHomeAlarm() {
+        guard !isUpdatingAlarm else { return }
+        let alarmToDelete = homeAlarm
+        isUpdatingAlarm = true
+        Task {
+            defer { isUpdatingAlarm = false }
+            if let alarmToDelete {
+                do {
+                    try alarms.deleteAlarm(id: alarmToDelete.id)
+                } catch {
+                    schedulingError = error.localizedDescription
+                }
+            } else {
+                let result = await alarms.scheduleSleepAlarm(
+                    bedMinutes: bedMinutes,
+                    wakeMinutes: wakeMinutes,
+                    label: "Sleep Cycle"
+                )
+                if case .failure(let error) = result {
+                    schedulingError = error.localizedDescription
+                }
+            }
+        }
     }
 
     private var homeAlarm: ScheduledAlarm? {

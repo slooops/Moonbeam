@@ -13,6 +13,14 @@ struct SleepSliderView: View {
     @Binding var sleepNowTrigger: Int
     private let alarmSet: Bool
     private let isUpdatingAlarm: Bool
+    /// The largest the dial may be, so the controls beneath it stay on screen
+    /// on short displays like the folded iPhone Duo.
+    private let maxDialSize: CGFloat
+    /// Puts the dial beside the times and controls, for landscape screens
+    /// like the unfolded iPhone Duo.
+    private let isWide: Bool
+    /// Shown beneath the controls in the wide layout.
+    private let wideFooter: AnyView?
     private let alarmAction: () -> Void
 
     // Plain instance, not @EnvironmentObject — SleepProfile is
@@ -33,6 +41,9 @@ struct SleepSliderView: View {
         sleepNowTrigger: Binding<Int>,
         alarmSet: Bool = false,
         isUpdatingAlarm: Bool = false,
+        maxDialSize: CGFloat = .infinity,
+        isWide: Bool = false,
+        wideFooter: AnyView? = nil,
         alarmAction: @escaping () -> Void = {}
     ) {
         _publishedBedMinutes = publishedBedMinutes
@@ -40,6 +51,9 @@ struct SleepSliderView: View {
         _sleepNowTrigger = sleepNowTrigger
         self.alarmSet = alarmSet
         self.isUpdatingAlarm = isUpdatingAlarm
+        self.maxDialSize = maxDialSize
+        self.isWide = isWide
+        self.wideFooter = wideFooter
         self.alarmAction = alarmAction
     }
 
@@ -115,13 +129,30 @@ struct SleepSliderView: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            timeLabels
-                .fixedSize(horizontal: false, vertical: true)
-            dialView
-                .aspectRatio(1, contentMode: .fit)
-            controls
-                .padding(.top, 6)
+        Group {
+            if isWide {
+                HStack(alignment: .center, spacing: 32) {
+                    dialView
+                        .frame(width: maxDialSize, height: maxDialSize)
+                    VStack(spacing: 20) {
+                        timeLabels
+                            .fixedSize(horizontal: false, vertical: true)
+                        controls
+                        wideFooter
+                    }
+                    .frame(minWidth: 340, maxWidth: .infinity)
+                }
+            } else {
+                VStack(spacing: 14) {
+                    timeLabels
+                        .fixedSize(horizontal: false, vertical: true)
+                    dialView
+                        .aspectRatio(1, contentMode: .fit)
+                        .frame(maxWidth: maxDialSize, maxHeight: maxDialSize)
+                    controls
+                        .padding(.top, 6)
+                }
+            }
         }
         .onAppear { publishTimes() }
         .onChange(of: displayBedMinutes) { publishTimes() }

@@ -109,6 +109,7 @@ struct JetLagView: View {
                     }
                 }
                 .padding()
+                .moonbeamReadableWidth()
             }
         }
         .navigationTitle("Jet Lag")
@@ -218,6 +219,7 @@ struct JetLagView: View {
                 bulletPoint("4", "Set alarms for the whole plan and arrive refreshed")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .moonbeamCard()
     }
 

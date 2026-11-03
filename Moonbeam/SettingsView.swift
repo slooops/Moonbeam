@@ -29,6 +29,7 @@ struct SettingsView: View {
                     aboutSection
                 }
                 .padding()
+                .moonbeamReadableWidth()
             }
         }
         .navigationTitle("Settings")
